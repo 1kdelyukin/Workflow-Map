@@ -29,6 +29,14 @@ const PATHS = {
   target: '<circle cx="8" cy="8" r="5.4"/><circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none"/>',
   cloud: '<path d="M4.9 12.6h6.6a2.9 2.9 0 0 0 .35-5.78 4 4 0 0 0-7.8.95A2.55 2.55 0 0 0 4.9 12.6Z"/>',
   eye: '<path d="M1.9 8s2.3-4.3 6.1-4.3S14.1 8 14.1 8s-2.3 4.3-6.1 4.3S1.9 8 1.9 8Z"/><circle cx="8" cy="8" r="1.9"/>',
+  play: '<path d="M5.4 3.2 12.2 8l-6.8 4.8Z"/>',
+  pause: '<path d="M5.4 3.4v9.2M10.6 3.4v9.2"/>',
+  'step-f': '<path d="M3.4 3.6 9 8l-5.6 4.4ZM11.8 3.4v9.2"/>',
+  'step-b': '<path d="M12.6 3.6 7 8l5.6 4.4ZM4.2 3.4v9.2"/>',
+  // connection-kind glyphs
+  'edge-flow': '<path d="M2 8h9"/><path d="M8.4 4.9 11.5 8l-3.1 3.1"/>',
+  'edge-callback': '<path d="M2 8h8.4" stroke-dasharray="3 2.6"/><path d="M8.4 4.9 11.5 8l-3.1 3.1"/>',
+  'edge-relation': '<path d="M2.4 8h11.2" stroke-dasharray="0.1 3.6"/>',
   // node-type glyphs
   flag: '<path d="M4.2 14V2.6M4.2 3h7.6L9.9 5.6l1.9 2.6H4.2"/>',
   spark: '<path d="M7.2 2c.45 2.5 1.25 3.3 3.75 3.75C8.45 6.2 7.65 7 7.2 9.5 6.75 7 5.95 6.2 3.45 5.75 5.95 5.3 6.75 4.5 7.2 2Z"/><path d="M12 9.4c.27 1.5.75 1.98 2.25 2.25-1.5.27-1.98.75-2.25 2.25-.27-1.5-.75-1.98-2.25-2.25 1.5-.27 1.98-.75 2.25-2.25Z"/>',

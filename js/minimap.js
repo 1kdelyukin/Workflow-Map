@@ -83,8 +83,26 @@ export function initMinimap(host, canvasApi) {
     }
   }
 
-  /* click / drag to move the viewport */
+  /* ── idle fade: visible while the view is moving, gone shortly after ──
+     Pan/zoom/drag activity (and hovering it) keeps the map alive; ~1.6s after
+     the screen stops moving it fades out so it doesn't sit over the canvas.
+     The M toggle still shows/hides it entirely. */
   let dragging = false;
+  let hover = false;
+  let fadeTimer = null;
+  const IDLE_MS = 1600;
+
+  function wake() {
+    if (host.hidden) return;
+    host.classList.add('live');
+    clearTimeout(fadeTimer);
+    if (hover || dragging) return; // re-armed on leave / pointerup
+    fadeTimer = setTimeout(() => host.classList.remove('live'), IDLE_MS);
+  }
+  host.addEventListener('pointerenter', () => { hover = true; wake(); });
+  host.addEventListener('pointerleave', () => { hover = false; wake(); });
+
+  /* click / drag to move the viewport */
   const jump = (e) => {
     if (!mapping) return;
     const r = canvas.getBoundingClientRect();
@@ -98,13 +116,15 @@ export function initMinimap(host, canvasApi) {
     jump(e);
   });
   canvas.addEventListener('pointermove', (e) => { if (dragging) jump(e); });
-  canvas.addEventListener('pointerup', () => { dragging = false; });
+  canvas.addEventListener('pointerup', () => { dragging = false; wake(); });
 
   for (const evt of ['view', 'graph', 'moved', 'layer', 'node', 'project:open']) on(evt, dirty);
+  for (const evt of ['view', 'moved', 'layer', 'project:open']) on(evt, wake);
 
   return {
     dirty,
-    setVisible(v) { host.hidden = !v; if (v) dirty(); },
+    wake,
+    setVisible(v) { host.hidden = !v; if (v) { dirty(); wake(); } },
     get visible() { return !host.hidden; },
   };
 }

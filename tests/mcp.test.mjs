@@ -147,9 +147,17 @@ console.log('— edits');
   ok(cyc.isError && /inside itself/.test(cyc.text), 'containment cycle rejected');
 
   const conn = await tool('connect', { project_id: pid, from_id: 'a', to_id: 'c' });
-  ok(conn.value.connection.from === 'a', 'connect now-siblings works');
+  ok(conn.value.connection.from === 'a' && conn.value.connection.kind === 'flow', 'connect now-siblings works (default kind flow)');
   const dup = await tool('connect', { project_id: pid, from_id: 'a', to_id: 'c' });
   ok(dup.isError && /already exists/.test(dup.text), 'duplicate connection rejected');
+  const rekind = await tool('connect', { project_id: pid, from_id: 'a', to_id: 'c', kind: 'callback' });
+  ok(rekind.value.connection.kind === 'callback' && /changed its kind/.test(rekind.value.note), 'connect on existing pair changes its kind');
+  const badKind = await tool('connect', { project_id: pid, from_id: 'a', to_id: 'c', kind: 'wormhole' });
+  ok(badKind.isError && /Unknown connection kind/.test(badKind.text), 'invalid kind → tool error with guidance');
+  const ktree = await tool('get_tree', { project_id: pid });
+  ok(ktree.value.connections.some((c) => c.from === 'a' && c.to === 'c' && c.kind === 'callback'), 'get_tree reports connection kinds');
+  const kcomp = await tool('get_component', { project_id: pid, component_id: 'c', include_content: false });
+  ok(kcomp.value.connections.in.some((c) => c.id === 'a' && c.kind === 'callback'), 'get_component reports connection kinds');
   const disc = await tool('disconnect', { project_id: pid, from_id: 'a', to_id: 'c' });
   ok(disc.value.removed.from === 'a', 'disconnect works');
 

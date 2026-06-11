@@ -11,10 +11,12 @@ Two ways to run it:
 
 - **Project library** — create, open, rename, describe, duplicate, delete, search, and sort multiple projects; each remembers its full graph, layers, positions, and camera per layer.
 - **Infinite canvas** — pan, zoom, starfield dot grid, draggable cards, smooth curved connections with arrowheads, marquee + multi-select.
+- **Connection kinds** — every connection is a *flow* (solid arrow), *callback* (dashed, open arrowhead — a response leg closing a loop), or *relation* (dotted, non-directional). Click a connection to switch its kind; kinds survive export/import and are first-class over MCP.
+- **Flow playback** (`P`) — numbers the current layer's connections in execution order and steps through them with play/pause and arrow keys, highlighting each hop. Callbacks are ordered after the forward pass; relations sit out.
 - **Space-station UI** — dark-first deep-space theme (light theme included), solid rounded cards with type-colored edges, nebula-glow accents.
 - **Layers** — any node can contain an inner sub-map. Opening one enters **focus mode**: the sub-map floats as a rounded panel over a blurred ghost of the parent layer, with side rails showing what feeds in and out of the container at the parent level — click a rail item to jump to that neighbor.
 - **Magnetic snapping** — grid snapping plus alignment guides; hold `⌥/Alt` to bypass, `S` to toggle.
-- **Detail panel** — title, type, file path, tags, summary, and a full-content editor (monospace for code), with copy button, child navigation, connection list, resize grip.
+- **Detail panel** — title, type, file path, tags, summary, and a full-content editor (monospace for code) with a **rendered Markdown preview**, plus copy button, child navigation, connection list, resize grip.
 - **Editing** — double-click to add a node, drag from a card's side port to connect, duplicate/delete with one-step undo, everything autosaves.
 - **Live AI sync (server mode)** — assistants import or edit projects over MCP and the changes appear in your open browser within seconds; simultaneous edits are caught with a clear keep-mine / take-theirs resolution.
 - **Import / export**
@@ -22,7 +24,7 @@ Two ways to run it:
   - Backup — every project in one file, restorable in bulk.
   - **AI handoff (`.md`)** — a self-describing document another AI can read directly, at three depths: *Overview*, *Standard*, *Full*. Standard/Full embed the complete project JSON, so they re-import losslessly.
   - Drag & drop any of these onto the window to import; the importer validates, repairs, and reports what it fixed.
-- **Extras** — global search (`/` or `⌘K`), legend that doubles as a type filter, **auto-arrange view** (`L`, a display-only toggle that never touches saved positions — available to viewers too), minimap, shortcut reference (`?`), save-status indicator, sample project on first run.
+- **Extras** — global search (`/` or `⌘K`), legend that doubles as a type filter, **auto-arrange view** (`L`, a display-only toggle that never touches saved positions — available to viewers too), an auto-hiding minimap (appears while you move the view, fades when idle), shortcut reference (`?`), save-status indicator, sample project on first run.
 
 ## Quick start (local)
 
@@ -92,7 +94,7 @@ In server mode the browser holds a working copy and autosaves with optimistic ve
 
 ## Keyboard shortcuts
 
-Press `?` in the app for the full reference. Highlights: scroll = pan, `⌘/Ctrl`+scroll = zoom, double-click = new node / open container, `N` new node, `⌘D` duplicate, `⌫` delete, `⌘Z` undo, `F` fit, `L` auto-arrange, `S` snapping, `U` up a level, `/` search, `T` theme, `M` minimap.
+Press `?` in the app for the full reference. Highlights: scroll = pan, `⌘/Ctrl`+scroll = zoom, double-click = new node / open container, `N` new node, `⌘D` duplicate, `⌫` delete, `⌘Z` undo, `F` fit, `L` auto-arrange, `S` snapping, `U` up a level, `/` search, `T` theme, `M` minimap, `P` flow playback (`←`/`→` to step).
 
 ## Project structure
 

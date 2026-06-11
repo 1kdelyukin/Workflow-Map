@@ -5,6 +5,7 @@ const base = new URL("../js/", import.meta.url).href;
 const { sampleProject } = await import(base + 'sample.js');
 const { exportProjectFile, exportBackupFile, buildHandoff, parseImportText } = await import(base + 'transfer.js');
 const { computeLayout } = await import(base + 'layout.js');
+const { renderMarkdown } = await import(base + 'markdown.js');
 
 let failures = 0;
 const ok = (cond, label) => {
@@ -64,6 +65,54 @@ ok(eq(r4.projects[0], p), 'full .md re-imports losslessly');
 let threw = false;
 try { parseImportText(ovw.text, ovw.filename); } catch (e) { threw = /Overview/.test(e.message); }
 ok(threw, 'overview .md rejects with a helpful message');
+
+console.log('— connection kinds');
+ok(p.edges.some((e) => e.kind === 'callback') && p.edges.some((e) => e.kind === 'relation'), 'sample includes callback + relation connections');
+ok(p.edges.filter((e) => !e.kind).length > 0, 'flow connections store no kind field');
+ok(std.text.includes('(callback)') && std.text.includes('(relation)'), 'handoff renders connection kinds');
+{
+  const km = JSON.parse(file.text);
+  km.project.edges[0].kind = 'wormhole';
+  km.project.edges[1].kind = 'flow';
+  const rk = parseImportText(JSON.stringify(km), 'kind.json');
+  ok(rk.warnings.some((w) => /connection kind/.test(w)), 'unknown kind warns');
+  ok(!rk.projects[0].edges[0].kind, 'unknown kind normalized to flow');
+  ok(!rk.projects[0].edges[1].kind, 'explicit "flow" normalized to implicit');
+}
+
+console.log('— markdown renderer');
+{
+  const html = renderMarkdown([
+    '# Title',
+    '',
+    'Some **bold** and `code` and [link](https://example.com/a?b=1).',
+    '',
+    '- item one',
+    '  - nested',
+    '- [x] done task',
+    '',
+    '```js',
+    'const x = "<b>&";',
+    '```',
+    '',
+    '| A | B |',
+    '| --- | --- |',
+    '| 1 | 2 |',
+    '',
+    '> quoted',
+    '<script>alert(1)</script>',
+  ].join('\n'));
+  ok(html.includes('<h1>Title</h1>'), 'heading');
+  ok(html.includes('<strong>bold</strong>') && html.includes('<code>code</code>'), 'inline emphasis + code');
+  ok(html.includes('href="https://example.com/a?b=1"') && html.includes('rel="noopener noreferrer"'), 'safe link');
+  ok(html.includes('<li>item one<ul><li>nested</li></ul></li>'), 'nested list');
+  ok(html.includes('md-check on'), 'task checkbox');
+  ok(html.includes('&lt;b&gt;&amp;'), 'code fence escapes HTML');
+  ok(html.includes('<table>') && html.includes('<th>A</th>') && html.includes('<td>2</td>'), 'table');
+  ok(html.includes('<blockquote>'), 'blockquote');
+  ok(!html.includes('<script'), 'raw HTML never passes through');
+  ok(!renderMarkdown('[x](javascript:alert(1))').includes('<a'), 'javascript: links are not linkified');
+}
 
 console.log('— malformed input handling');
 let msg = '';

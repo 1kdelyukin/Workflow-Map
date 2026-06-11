@@ -21,9 +21,17 @@ A project:
   "lastParent": "root",          // last layer the user had open
   "views": { "<layer-id>": { "x": 0, "y": 0, "z": 1 } },  // camera per layer
   "nodes": [ /* components, see below */ ],
-  "edges": [ { "id": "uuid", "from": "<node-id>", "to": "<node-id>" } ]
+  "edges": [ { "id": "uuid", "from": "<node-id>", "to": "<node-id>", "kind": "callback" } ]
 }
 ```
+
+Connection (edge) kinds — `kind` is optional and defaults to `flow` (omit it for flow):
+
+| Kind | Meaning | Drawn as |
+| --- | --- | --- |
+| `flow` | A feeds into, precedes, or triggers B | solid arrow |
+| `callback` | A returns or reports back to B (a response leg, usually closing a loop) | dashed, open arrowhead |
+| `relation` | non-directional association | dotted, no arrowhead |
 
 A component (node):
 
@@ -54,8 +62,8 @@ Component types:
 Rules the validator enforces (violations are repaired and reported as warnings, not errors):
 
 - every `parentId` must be `"root"` or an existing node id; containment must be acyclic
-- connections join **siblings only** (both endpoints share the same `parentId`); no self-loops or duplicates
-- unknown types become `other`; missing positions are auto-placed
+- connections join **siblings only** (both endpoints share the same `parentId`); no self-loops or duplicates (at most one connection per ordered pair, whatever its kind)
+- unknown types become `other`; unknown connection kinds become `flow`; missing positions are auto-placed
 
 ## File formats
 
@@ -112,10 +120,10 @@ claude mcp add --transport http agentmap https://<your-host>/api/mcp \
 | --- | --- |
 | `create_project` / `update_project` / `delete_project` | project lifecycle |
 | `import_project(data, mode?)` | import a whole project from JSON or handoff markdown; `mode: "replace"` updates in place by id |
-| `add_components(project_id, components, connections?)` | batch-add; omit x/y to auto-place; give explicit ids to reference new components within the call |
+| `add_components(project_id, components, connections?)` | batch-add; omit x/y to auto-place; give explicit ids to reference new components within the call; connections accept an optional `kind` |
 | `update_component(project_id, component_id, …patch)` | edit fields, move between layers via `parent_id` |
 | `delete_components(project_id, component_ids)` | cascades to nested components |
-| `connect` / `disconnect` | manage directed sibling connections |
+| `connect(project_id, from_id, to_id, kind?)` / `disconnect` | manage directed sibling connections; `connect` on an existing pair with a different `kind` changes its kind |
 | `export_project(project_id, format, depth?)` | lossless JSON or handoff markdown |
 | `arrange(project_id, layer_id?, recursive?)` | auto-layout |
 
@@ -147,7 +155,7 @@ When a user asks you to import an existing workflow (a repository, a `.claude/` 
    - pipeline stages described in docs or orchestration code → `phase`
 2. **Structure with layers, don't flatten.** Top level: the macro flow as phases/major components, left → right. Put a subsystem's internals *inside* its component (`parentId`), not beside it. 5–15 components per layer is the readable range.
 3. **Write a 1–2 sentence `summary` for every component** — summaries are what make `get_tree` useful. Set `path` to the real file path and put the file's full text in `content`.
-4. **Add connections** for data flow, sequencing, and triggering — between siblings only. Top-level arrows describe the macro flow; arrows inside a container describe its internal mechanics.
+4. **Add connections** for data flow, sequencing, and triggering — between siblings only. Top-level arrows describe the macro flow; arrows inside a container describe its internal mechanics. Use `kind: "callback"` for response/feedback legs (reviewer → author, worker → orchestrator reports) and `kind: "relation"` for loose associations; leave the main flow as the default kind.
 5. **Omit all `x`/`y`** and let the importer auto-arrange.
 6. **Account for everything.** Every relevant file is either mapped or deliberately skipped (say which in your reply to the user). Don't silently drop components.
 7. **Import** via `import_project` (or `create_project` + batched `add_components` for very large systems), then **read the warnings and `get_tree`** to verify the result matches your plan.

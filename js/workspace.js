@@ -67,8 +67,17 @@ export function initWorkspace(viewEl) {
           <button class="zoom-label" data-zoom="reset" data-tip="Reset to 100% · 0">100%</button>
           <button class="icon-btn icon-btn-sm" data-zoom="in" data-tip="Zoom in · +">+</button>
         </div>
+        <button class="icon-btn glass flow-btn" data-act="play" data-tip="Play the flow · P">${icon('play')}</button>
         <button class="icon-btn glass mm-show" data-tip="Show minimap · M" hidden>${icon('map')}</button>
       </div>
+    </div>
+    <div class="flow-bar glass" hidden>
+      <button class="icon-btn icon-btn-sm" data-flow="prev" data-tip="Previous step · ←">${icon('step-b')}</button>
+      <button class="icon-btn icon-btn-sm flow-play" data-flow="toggle" data-tip="Play / pause">${icon('play')}</button>
+      <button class="icon-btn icon-btn-sm" data-flow="next" data-tip="Next step · →">${icon('step-f')}</button>
+      <span class="flow-count"></span>
+      <span class="flow-name"></span>
+      <button class="icon-btn icon-btn-sm" data-flow="close" data-tip="Exit playback · P">${icon('x')}</button>
     </div>
     <div class="legend glass">
       <button class="legend-toggle icon-btn icon-btn-sm" data-tip="Collapse legend">${icon('chev-d')}</button>
@@ -199,6 +208,8 @@ export function initWorkspace(viewEl) {
   };
   viewEl.querySelector('.mm-hide').addEventListener('click', () => setMinimap(false));
   mmShow.addEventListener('click', () => setMinimap(true));
+  // the minimap fades out when the view is idle; hovering the corner HUD brings it back
+  viewEl.querySelector('.hud-bl').addEventListener('pointerenter', () => minimap.wake());
   if (uiPref('minimap') === '0') setMinimap(false);
   // keep the canvas reference: hidden state lives on the host element
   mmHost.hidden = uiPref('minimap') === '0';
@@ -242,6 +253,78 @@ export function initWorkspace(viewEl) {
   viewEl.querySelector('[data-zoom=out]').addEventListener('click', () => canvas.zoomBy(1 / 1.25));
   viewEl.querySelector('[data-zoom=reset]').addEventListener('click', () => canvas.resetZoom());
   on('view', () => { zoomLabel.textContent = Math.round(canvas.getZoom() * 100) + '%'; });
+
+  /* ── flow playback ── */
+  const flowBar = viewEl.querySelector('.flow-bar');
+  const flowBtn = viewEl.querySelector('[data-act=play]');
+  const flowCount = flowBar.querySelector('.flow-count');
+  const flowName = flowBar.querySelector('.flow-name');
+  let flowTimer = null;
+
+  function updateFlowBar() {
+    if (!canvas.flow.active) return;
+    const len = canvas.flow.length;
+    flowCount.textContent = len ? `${canvas.flow.index + 1} / ${len}` : '0 / 0';
+    const eid = canvas.flow.current;
+    const e = eid ? state.project?.edges.find((x) => x.id === eid) : null;
+    flowName.textContent = e
+      ? `${getNode(e.from)?.title || 'Untitled'} ${e.kind === 'callback' ? '⇢' : '→'} ${getNode(e.to)?.title || 'Untitled'}`
+      : 'No connections in this layer';
+  }
+
+  function setFlowPlaying(p) {
+    clearInterval(flowTimer);
+    flowTimer = null;
+    if (p) {
+      flowTimer = setInterval(() => {
+        if (canvas.flow.index >= canvas.flow.length - 1) { setFlowPlaying(false); return; }
+        canvas.flow.seek(canvas.flow.index + 1);
+        updateFlowBar();
+      }, 1200);
+    }
+    flowBar.querySelector('.flow-play').innerHTML = icon(p ? 'pause' : 'play');
+  }
+
+  function startFlow() {
+    const steps = canvas.flow.start();
+    if (!steps) {
+      canvas.flow.stop();
+      toast('This layer has no connections to play.', { type: 'info', timeout: 2200 });
+      return;
+    }
+    flowBar.hidden = false;
+    flowBtn.classList.add('on');
+    updateFlowBar();
+    setFlowPlaying(true);
+  }
+
+  function stopFlow() {
+    if (!canvas.flow.active && flowBar.hidden) return;
+    setFlowPlaying(false);
+    canvas.flow.stop();
+    flowBar.hidden = true;
+    flowBtn.classList.remove('on');
+  }
+
+  const toggleFlow = () => (canvas.flow.active ? stopFlow() : startFlow());
+
+  flowBtn.addEventListener('click', toggleFlow);
+  flowBar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-flow]');
+    if (!b) return;
+    if (b.dataset.flow === 'close') { stopFlow(); return; }
+    if (b.dataset.flow === 'toggle') {
+      if (!flowTimer && canvas.flow.index >= canvas.flow.length - 1) canvas.flow.seek(0);
+      setFlowPlaying(!flowTimer);
+      updateFlowBar();
+      return;
+    }
+    setFlowPlaying(false);
+    canvas.flow.seek(canvas.flow.index + (b.dataset.flow === 'next' ? 1 : -1));
+    updateFlowBar();
+  });
+  on('flow', updateFlowBar); // graph/layer changes renumber the steps
+  on('project:close', stopFlow);
 
   /* ── save status ── */
   on('save', (s) => {
@@ -412,6 +495,14 @@ export function initWorkspace(viewEl) {
     }
     if (mod) return;
 
+    if (canvas.flow.active && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+      e.preventDefault();
+      setFlowPlaying(false);
+      canvas.flow.seek(canvas.flow.index + (e.key === 'ArrowRight' ? 1 : -1));
+      updateFlowBar();
+      return;
+    }
+
     switch (e.key) {
       case '/': e.preventDefault(); searchInput.focus(); break;
       case 'Delete':
@@ -422,7 +513,9 @@ export function initWorkspace(viewEl) {
         break;
       case 'Escape':
         if (state.selection.size || state.selectedEdge) setSelection([]);
+        else stopFlow();
         break;
+      case 'p': case 'P': toggleFlow(); break;
       case 'n': case 'N': canvas.addNodeAtCenter('agent'); break;
       case 'f': case 'F': canvas.fit(); break;
       case 'l': case 'L': toggleArrange(); break;
@@ -544,17 +637,21 @@ export function openHelp() {
           ${row(K('F'), 'Zoom to fit')}
           ${row(K('0'), 'Reset zoom')}
           ${row(K('+') + ' / ' + K('−'), 'Zoom in / out')}
-          ${row(K('M'), 'Toggle minimap')}
+          ${row(K('M'), 'Toggle minimap (it auto-hides when idle)')}
           <div class="help-h">Navigation</div>
           ${row(K('dbl-click') + ' container', 'Open its inner map')}
           ${row(K('U'), 'Up one level')}
           ${row(K('/') + ' or ' + K('⌘', 'K'), 'Search everything')}
+          <div class="help-h">Flow playback</div>
+          ${row(K('P'), 'Number the connections in flow order and play them')}
+          ${row(K('←') + ' / ' + K('→'), 'Step backward / forward')}
         </div>
         <div class="help-col">
           <div class="help-h">Editing</div>
           ${row(K('dbl-click') + ' canvas', 'New node at cursor')}
           ${row(K('N'), 'New node at center')}
           ${row('drag from a side port', 'Connect nodes (drop on empty space to create + connect)')}
+          ${row('click a connection', 'Select it — switch its kind (flow / callback / relation) or remove it')}
           ${row(K('⇧', 'click'), 'Multi-select')}
           ${row(K('⇧', 'drag') + ' canvas', 'Marquee select')}
           ${row(K('⌘', 'D'), 'Duplicate selection')}

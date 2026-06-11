@@ -5,7 +5,7 @@ import {
 } from './storage.js';
 import { uid, toast, confirmDialog, esc } from './ui.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const SCHEMA = 1;
 
 export const TYPES = {
@@ -18,6 +18,16 @@ export const TYPES = {
   other: { label: 'Other', icon: 'dot' },
 };
 export const TYPE_ORDER = ['phase', 'agent', 'skill', 'hook', 'code', 'doc', 'other'];
+
+/* Connection kinds. "flow" is the default and is stored implicitly (no `kind`
+   field) so older files and tools keep working unchanged. */
+export const EDGE_KINDS = {
+  flow:     { label: 'Flow',     hint: 'feeds into · precedes · triggers' },
+  callback: { label: 'Callback', hint: 'returns to · reports back' },
+  relation: { label: 'Relation', hint: 'associated · no direction' },
+};
+export const EDGE_KIND_ORDER = ['flow', 'callback', 'relation'];
+export const edgeKindOf = (e) => (e && EDGE_KINDS[e.kind] ? e.kind : 'flow');
 
 export const state = {
   mode: 'library',        // 'library' | 'project'
@@ -526,7 +536,7 @@ export function duplicateNodes(ids) {
     // copy edges fully inside the duplicated subtree
     for (const e of [...p.edges]) {
       if (map.has(e.from) && map.has(e.to)) {
-        p.edges.push({ id: uid(), from: map.get(e.from), to: map.get(e.to) });
+        p.edges.push({ id: uid(), from: map.get(e.from), to: map.get(e.to), ...(e.kind ? { kind: e.kind } : {}) });
       }
     }
     clones.push(top);
@@ -535,15 +545,27 @@ export function duplicateNodes(ids) {
   return clones;
 }
 
-export function addEdge(from, to) {
+export function addEdge(from, to, kind = 'flow') {
   const p = state.project;
   if (!p || from === to || !getNode(from) || !getNode(to) || !guardEdit()) return null;
   if (p.edges.some((e) => e.from === from && e.to === to)) return null;
   const e = { id: uid(), from, to };
+  if (EDGE_KINDS[kind] && kind !== 'flow') e.kind = kind;
   p.edges.push(e);
   markDirty();
   emit('graph');
   return e;
+}
+
+export function setEdgeKind(id, kind) {
+  const p = state.project;
+  if (!p || !EDGE_KINDS[kind] || !guardEdit()) return;
+  const e = p.edges.find((x) => x.id === id);
+  if (!e || edgeKindOf(e) === kind) return;
+  if (kind === 'flow') delete e.kind;
+  else e.kind = kind;
+  markDirty();
+  emit('graph');
 }
 
 export function deleteEdge(id) {

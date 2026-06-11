@@ -11,7 +11,9 @@ const INSTRUCTIONS = `AgentMap stores visual maps of AI-agent systems as layered
 Components (nodes) have a type — phase, agent, skill, hook, code, doc, other — plus a title,
 optional file path, tags, a 1–2 sentence summary, and full content. Nesting (parent_id)
 expresses containment: any component can contain an inner sub-map. Connections are directed
-A → B links and always join siblings within one layer.
+A → B links and always join siblings within one layer. Each connection has a kind:
+"flow" (default — A feeds into, precedes, or triggers B), "callback" (A returns or reports
+back to B, closing a loop), or "relation" (non-directional association).
 
 Typical flows:
 - Explore: list_projects → get_tree (structure + summaries, no content) → get_component for full content. Use search to locate things. Only fetch what you need — get_tree is small even for big maps.
@@ -24,6 +26,12 @@ The full format spec and import playbook is served at /SPEC.md on this host.`;
 /* ── shared schema fragments ── */
 
 const TYPE_ENUM = ['phase', 'agent', 'skill', 'hook', 'code', 'doc', 'other'];
+const KIND_ENUM = ['flow', 'callback', 'relation'];
+const KIND_PROP = {
+  type: 'string',
+  enum: KIND_ENUM,
+  description: 'Connection kind. "flow" (default): feeds into / precedes / triggers. "callback": returns or reports back (closes a loop). "relation": non-directional association.',
+};
 const PID = { type: 'string', description: 'Project id (from list_projects).' };
 
 const componentSchema = (forUpdate = false) => ({
@@ -215,10 +223,10 @@ export function createMcp(store, { appUrl = '' } = {}) {
           components: { type: 'array', items: componentSchema(false) },
           connections: {
             type: 'array',
-            description: 'Directed links {from, to} using component ids (existing or just created). Both ends must share the same parent.',
+            description: 'Directed links {from, to, kind?} using component ids (existing or just created). Both ends must share the same parent.',
             items: {
               type: 'object',
-              properties: { from: { type: 'string' }, to: { type: 'string' } },
+              properties: { from: { type: 'string' }, to: { type: 'string' }, kind: KIND_PROP },
               required: ['from', 'to'],
             },
           },
@@ -249,13 +257,13 @@ export function createMcp(store, { appUrl = '' } = {}) {
     },
     {
       name: 'connect',
-      description: 'Add a directed connection between two sibling components (same layer): from feeds into / precedes / triggers to.',
+      description: 'Add a directed connection between two sibling components (same layer). kind "flow" (default): from feeds into / precedes / triggers to; "callback": from returns or reports back to to; "relation": non-directional association. Calling connect on an existing connection with a different kind changes its kind.',
       inputSchema: {
         type: 'object',
-        properties: { project_id: PID, from_id: { type: 'string' }, to_id: { type: 'string' } },
+        properties: { project_id: PID, from_id: { type: 'string' }, to_id: { type: 'string' }, kind: KIND_PROP },
         required: ['project_id', 'from_id', 'to_id'],
       },
-      run: (a) => mutate(a.project_id, (p) => core.addConnection(p, a.from_id, a.to_id)),
+      run: (a) => mutate(a.project_id, (p) => core.addConnection(p, a.from_id, a.to_id, a.kind ?? 'flow')),
     },
     {
       name: 'disconnect',

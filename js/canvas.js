@@ -2,7 +2,8 @@
 // snapping with alignment guides, marquee selection, port-drag connections, layers.
 import {
   state, on, emit, TYPES, getNode, childrenOf, childCount, layerEdges,
-  addNode, addEdge, deleteEdge, setParent, setSelection, clearSelection,
+  addNode, addEdge, deleteEdge, setEdgeKind, EDGE_KINDS, EDGE_KIND_ORDER, edgeKindOf,
+  setParent, setSelection, clearSelection,
   setView, getView, snapEnabled, markDirty, pushUndo, runUndo,
 } from './state.js';
 import { esc, clamp, toast, uiPref } from './ui.js';
@@ -27,10 +28,17 @@ export function initCanvas(host) {
             <marker id="am-arrow-sel" viewBox="0 0 10 10" refX="7.6" refY="5" markerWidth="6.4" markerHeight="6.4" orient="auto-start-reverse">
               <path d="M0.9,0.9 L9.1,5 L0.9,9.1 L2.9,5 Z" fill="var(--accent)" stroke="none"/>
             </marker>
+            <marker id="am-arrow-open" viewBox="0 0 10 10" refX="7.8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M1.8,1.4 L8.6,5 L1.8,8.6" fill="none" stroke="var(--edge-solid)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </marker>
+            <marker id="am-arrow-open-sel" viewBox="0 0 10 10" refX="7.8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M1.8,1.4 L8.6,5 L1.8,8.6" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </marker>
           </defs>
           <g class="edge-g"></g>
         </svg>
         <div class="node-layer"></div>
+        <div class="flow-layer"></div>
         <svg class="overlay-svg" width="2" height="2">
           <g class="guide-g"></g>
           <path class="temp-edge" hidden></path>
@@ -47,6 +55,7 @@ export function initCanvas(host) {
   const world = host.querySelector('.world');
   const edgeG = host.querySelector('.edge-g');
   const nodeLayer = host.querySelector('.node-layer');
+  const flowLayer = host.querySelector('.flow-layer');
   const guideG = host.querySelector('.guide-g');
   const tempEdge = host.querySelector('.temp-edge');
   const marqueeEl = host.querySelector('.marquee');
@@ -59,7 +68,7 @@ export function initCanvas(host) {
   let edgeMids = new Map();  // edge id -> {x,y}
   let gesture = null;
   let spaceDown = false;
-  let edgeXBtn = null;
+  let edgeToolsEl = null;
   let viewAnim = null;
   const touchPts = new Map();
 
@@ -230,15 +239,23 @@ export function initCanvas(host) {
 
     edgeList = layerEdges(state.parentId);
     edgeG.innerHTML = edgeList.map((e) => `
-      <g class="edge" data-id="${esc(e.id)}">
+      <g class="edge k-${edgeKindOf(e)}" data-id="${esc(e.id)}">
         <path class="edge-hit"></path>
-        <path class="edge-line" marker-end="url(#am-arrow)"></path>
+        <path class="edge-line"></path>
       </g>`).join('');
     for (const e of edgeList) updateEdgePath(e);
 
     emptyHint.hidden = nodes.length > 0;
+    refreshFlow();
     applySelection();
     applyFilters();
+  }
+
+  // marker url for an edge kind, or null for unmarked (relations have no head)
+  function markerFor(kind, sel) {
+    if (kind === 'relation') return null;
+    if (kind === 'callback') return sel ? 'url(#am-arrow-open-sel)' : 'url(#am-arrow-open)';
+    return sel ? 'url(#am-arrow-sel)' : 'url(#am-arrow)';
   }
 
   function edgePathFor(g1, g2) {
@@ -275,7 +292,8 @@ export function initCanvas(host) {
     const { d, mid } = edgePathFor(g1, g2);
     edgeMids.set(e.id, mid);
     for (const p of g.children) p.setAttribute('d', d);
-    if (state.selectedEdge === e.id) positionEdgeX();
+    if (state.selectedEdge === e.id) positionEdgeTools();
+    positionFlowBadge(e.id);
   }
 
   const updateEdgesTouching = (ids) => {
@@ -306,32 +324,47 @@ export function initCanvas(host) {
 
   function applySelection() {
     for (const [id, el] of nodeEls) el.classList.toggle('sel', state.selection.has(id));
+    const byEdgeId = new Map(edgeList.map((e) => [e.id, e]));
     for (const g of edgeG.children) {
       const sel = g.dataset.id === state.selectedEdge;
       g.classList.toggle('sel', sel);
-      g.querySelector('.edge-line')?.setAttribute('marker-end', sel ? 'url(#am-arrow-sel)' : 'url(#am-arrow)');
+      const line = g.querySelector('.edge-line');
+      const e = byEdgeId.get(g.dataset.id);
+      if (!line || !e) continue;
+      const m = markerFor(edgeKindOf(e), sel);
+      if (m) line.setAttribute('marker-end', m);
+      else line.removeAttribute('marker-end');
     }
-    positionEdgeX();
+    positionEdgeTools();
   }
 
-  function positionEdgeX() {
-    if (!state.selectedEdge || !edgeMids.has(state.selectedEdge)) {
-      edgeXBtn?.remove();
-      edgeXBtn = null;
+  /* floating toolbar at the midpoint of the selected edge: switch its kind, or delete it */
+  function positionEdgeTools() {
+    const e = state.selectedEdge ? edgeList.find((x) => x.id === state.selectedEdge) : null;
+    if (!e || !edgeMids.has(e.id)) {
+      edgeToolsEl?.remove();
+      edgeToolsEl = null;
       return;
     }
-    if (!edgeXBtn) {
-      edgeXBtn = document.createElement('button');
-      edgeXBtn.className = 'edge-x';
-      edgeXBtn.innerHTML = icon('x');
-      edgeXBtn.setAttribute('data-tip', 'Remove connection');
-      edgeXBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
-      edgeXBtn.addEventListener('click', () => deleteEdge(state.selectedEdge));
-      world.appendChild(edgeXBtn);
+    if (!edgeToolsEl) {
+      edgeToolsEl = document.createElement('div');
+      edgeToolsEl.className = 'edge-tools glass';
+      edgeToolsEl.innerHTML = EDGE_KIND_ORDER.map((k) =>
+        `<button class="et-kind" data-kind="${k}" data-tip="${EDGE_KINDS[k].label} — ${EDGE_KINDS[k].hint}">${icon('edge-' + k)}</button>`).join('')
+        + `<span class="et-sep"></span><button class="et-del" data-tip="Remove connection">${icon('x')}</button>`;
+      edgeToolsEl.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+      edgeToolsEl.addEventListener('click', (ev) => {
+        const kb = ev.target.closest('.et-kind');
+        if (kb) { setEdgeKind(state.selectedEdge, kb.dataset.kind); return; }
+        if (ev.target.closest('.et-del')) deleteEdge(state.selectedEdge);
+      });
+      world.appendChild(edgeToolsEl);
     }
-    const m = edgeMids.get(state.selectedEdge);
-    edgeXBtn.style.left = m.x + 'px';
-    edgeXBtn.style.top = m.y + 'px';
+    const kind = edgeKindOf(e);
+    for (const b of edgeToolsEl.querySelectorAll('.et-kind')) b.classList.toggle('on', b.dataset.kind === kind);
+    const m = edgeMids.get(e.id);
+    edgeToolsEl.style.left = m.x + 'px';
+    edgeToolsEl.style.top = m.y + 'px';
   }
 
   function applyFilters() {
@@ -347,6 +380,116 @@ export function initCanvas(host) {
       const dim = active && (!f.has(geom.get(e.from)?.type) || !f.has(geom.get(e.to)?.type));
       g.classList.toggle('dim', dim);
     }
+  }
+
+  /* ════════ flow playback ════════
+     Numbers this layer's connections in execution order and steps through them.
+     Relations are skipped (they carry no direction); callbacks are ordered after
+     the forward pass out of their source node. */
+
+  let flowSeq = null;          // ordered edge ids, or null when playback is off
+  let flowIdx = 0;
+  const flowBadges = new Map(); // edge id -> badge element
+
+  function computeFlowSeq() {
+    const byPos = (a, b) => (a.x - b.x) || (a.y - b.y);
+    const nodes = [...childrenOf(state.parentId)].sort(byPos);
+    const edges = edgeList.filter((e) => edgeKindOf(e) !== 'relation');
+
+    // node visit order: topological over flow edges only (callbacks close loops,
+    // so counting them would make almost every real pipeline cyclic)
+    const inDeg = new Map(nodes.map((n) => [n.id, 0]));
+    const flowOut = new Map(nodes.map((n) => [n.id, []]));
+    for (const e of edges) {
+      if (edgeKindOf(e) !== 'flow') continue;
+      flowOut.get(e.from)?.push(e);
+      if (inDeg.has(e.to)) inDeg.set(e.to, inDeg.get(e.to) + 1);
+    }
+    const order = new Map();
+    const ready = nodes.filter((n) => inDeg.get(n.id) === 0);
+    const pending = new Set(nodes.filter((n) => inDeg.get(n.id) > 0).map((n) => n.id));
+    while (ready.length || pending.size) {
+      if (!ready.length) {
+        // pure cycle: release the positionally-first remaining node
+        const next = nodes.find((n) => pending.has(n.id));
+        pending.delete(next.id);
+        ready.push(next);
+      }
+      const n = ready.shift();
+      if (order.has(n.id)) continue;
+      order.set(n.id, order.size);
+      const unlocked = [];
+      for (const e of flowOut.get(n.id) || []) {
+        if (!pending.has(e.to)) continue;
+        inDeg.set(e.to, inDeg.get(e.to) - 1);
+        if (inDeg.get(e.to) <= 0) {
+          pending.delete(e.to);
+          const t = getNode(e.to);
+          if (t) unlocked.push(t);
+        }
+      }
+      ready.push(...unlocked.sort(byPos));
+    }
+
+    const rank = (e) => {
+      const cb = edgeKindOf(e) === 'callback' ? 1 : 0;
+      return [(order.get(e.from) ?? 0) + cb * 0.5, cb, order.get(e.to) ?? 0];
+    };
+    return edges.sort((a, b) => {
+      const ra = rank(a), rb = rank(b);
+      return (ra[0] - rb[0]) || (ra[1] - rb[1]) || (ra[2] - rb[2]);
+    }).map((e) => e.id);
+  }
+
+  function positionFlowBadge(eid) {
+    const el = flowBadges.get(eid);
+    const m = edgeMids.get(eid);
+    if (!el || !m) return;
+    el.style.left = m.x + 'px';
+    el.style.top = m.y + 'px';
+  }
+
+  function renderFlowState() {
+    for (const g of edgeG.children) {
+      const i = flowSeq ? flowSeq.indexOf(g.dataset.id) : -1;
+      g.classList.toggle('flow-cur', !!flowSeq && i === flowIdx);
+      g.classList.toggle('flow-done', !!flowSeq && i >= 0 && i < flowIdx);
+      g.classList.toggle('flow-off', !!flowSeq && i < 0);
+    }
+    for (const [eid, el] of flowBadges) {
+      const i = flowSeq.indexOf(eid);
+      el.classList.toggle('cur', i === flowIdx);
+      el.classList.toggle('done', i < flowIdx);
+    }
+    const cur = flowSeq ? edgeList.find((e) => e.id === flowSeq[flowIdx]) : null;
+    for (const [nid, el] of nodeEls) {
+      el.classList.toggle('flow-src', !!cur && cur.from === nid);
+      el.classList.toggle('flow-dst', !!cur && cur.to === nid);
+    }
+  }
+
+  function buildFlowBadges() {
+    flowLayer.innerHTML = '';
+    flowBadges.clear();
+    if (!flowSeq) { renderFlowState(); return; }
+    flowSeq.forEach((eid, i) => {
+      const el = document.createElement('div');
+      el.className = 'flow-badge';
+      el.textContent = i + 1;
+      flowLayer.appendChild(el);
+      flowBadges.set(eid, el);
+      positionFlowBadge(eid);
+    });
+    renderFlowState();
+  }
+
+  // called from rebuild(): keep playback in sync when the graph or layer changes
+  function refreshFlow() {
+    if (!flowSeq) { flowLayer.innerHTML = ''; flowBadges.clear(); return; }
+    flowSeq = computeFlowSeq();
+    flowIdx = clamp(flowIdx, 0, Math.max(0, flowSeq.length - 1));
+    buildFlowBadges();
+    emit('flow');
   }
 
   /* ════════ snapping & guides ════════ */
@@ -482,7 +625,7 @@ export function initCanvas(host) {
     if (gesture) return;
     if (e.button === 1 || (e.button === 0 && spaceDown)) { startPan(e); return; }
     if (e.button !== 0) return;
-    if (e.target.closest('.edge-x')) return;
+    if (e.target.closest('.edge-tools')) return;
     const portEl = e.target.closest('.port');
     if (portEl) { startPort(e, portEl); return; }
     if (e.target.closest('.node-kids')) return; // click navigates; no drag
@@ -714,7 +857,7 @@ export function initCanvas(host) {
 
   viewport.addEventListener('dblclick', (e) => {
     if (performance.now() < suppressDblclickUntil) return; // handled as a double-press already
-    if (e.target.closest('.port') || e.target.closest('.edge-x')) return;
+    if (e.target.closest('.port') || e.target.closest('.edge-tools')) return;
     const nodeEl = e.target.closest('.node');
     if (nodeEl) {
       // double-click anywhere on a card: containers open, leaves focus the title
@@ -773,7 +916,18 @@ export function initCanvas(host) {
     api.centerOnNode(id);
     api.pulse(id);
   });
-  on('project:close', () => { nodeLayer.innerHTML = ''; edgeG.innerHTML = ''; geom.clear(); nodeEls.clear(); });
+  on('project:close', () => {
+    nodeLayer.innerHTML = '';
+    edgeG.innerHTML = '';
+    geom.clear();
+    nodeEls.clear();
+    edgeToolsEl?.remove();
+    edgeToolsEl = null;
+    flowSeq = null;
+    flowIdx = 0;
+    flowLayer.innerHTML = '';
+    flowBadges.clear();
+  });
 
   /* ════════ public api ════════ */
 
@@ -841,6 +995,28 @@ export function initCanvas(host) {
       return arrangeView;
     },
     arrangeViewOn: () => arrangeView,
+    flow: {
+      get active() { return flowSeq !== null; },
+      get length() { return flowSeq ? flowSeq.length : 0; },
+      get index() { return flowIdx; },
+      get current() { return flowSeq?.[flowIdx] ?? null; },
+      start() {
+        flowSeq = computeFlowSeq();
+        flowIdx = 0;
+        buildFlowBadges();
+        return flowSeq.length;
+      },
+      stop() {
+        flowSeq = null;
+        flowIdx = 0;
+        buildFlowBadges();
+      },
+      seek(i) {
+        if (!flowSeq || !flowSeq.length) return;
+        flowIdx = clamp(i, 0, flowSeq.length - 1);
+        renderFlowState();
+      },
+    },
     runAutoLayout() {
       if (!state.canEdit) return;
       const nodes = childrenOf(state.parentId);

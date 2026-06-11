@@ -1,11 +1,12 @@
 // Right-side detail panel: read and edit the selected node, navigate its children
 // and connections. Collapsible, resizable, autosaves through state actions.
 import {
-  state, on, emit, TYPES, TYPE_ORDER, getNode, childrenOf, childCount,
+  state, on, emit, TYPES, TYPE_ORDER, EDGE_KINDS, edgeKindOf, getNode, childrenOf, childCount,
   updateNode, deleteNodes, duplicateNodes, deleteEdge, addNode, setParent, setSelection,
 } from './state.js';
 import { esc, clamp, copyText, uiPref } from './ui.js';
 import { icon } from './icons.js';
+import { renderMarkdown } from './markdown.js';
 
 const CODE_EXT = /\.(ts|tsx|js|jsx|mjs|py|sh|bash|json|ya?ml|css|html|sql|go|rs|rb|java|toml)$/i;
 
@@ -96,9 +97,14 @@ export function initPanel(host) {
         <div class="panel-pane panel-pane-grow" data-pane="content">
           <div class="section-head">
             <span class="field-label">Content</span>
+            <span class="cmode-seg" role="radiogroup">
+              <button class="seg" data-cmode="preview">Preview</button>
+              <button class="seg" data-cmode="edit">Edit</button>
+            </span>
             <button class="mini-btn" data-act="copy" data-tip="Copy content">${icon('copy')} Copy</button>
           </div>
           <textarea class="content-input ${mono ? 'mono' : ''}" data-field="content" placeholder="Full content — instructions, documentation, or code…" spellcheck="false">${esc(n.content)}</textarea>
+          <div class="md-view" hidden></div>
         </div>
 
         <div class="panel-pane" data-pane="links">
@@ -166,10 +172,13 @@ export function initPanel(host) {
     const out = e.from === n.id;
     const other = getNode(out ? e.to : e.from);
     if (!other) return '';
+    const kind = edgeKindOf(e);
+    const tip = kind === 'relation' ? 'Relation (no direction)' : `${out ? 'Outgoing' : 'Incoming'} ${EDGE_KINDS[kind].label.toLowerCase()}`;
     return `
       <div class="conn-row">
-        <span class="conn-dir ${out ? 'out' : 'in'}" data-tip="${out ? 'Outgoing' : 'Incoming'}">${icon('arrow-l')}</span>
+        <span class="conn-dir ${kind === 'relation' ? 'rel' : out ? 'out' : 'in'}" data-tip="${tip}">${icon(kind === 'relation' ? 'edge-relation' : 'arrow-l')}</span>
         <button class="conn-name" data-goto="${esc(other.id)}">${esc(other.title)}</button>
+        ${kind !== 'flow' ? `<span class="conn-kind">${EDGE_KINDS[kind].label}</span>` : ''}
         <button class="icon-btn icon-btn-sm" data-unlink="${esc(e.id)}" aria-label="Remove connection">${icon('x')}</button>
       </div>`;
   }
@@ -218,8 +227,32 @@ export function initPanel(host) {
     const summary = host.querySelector('[data-field=summary]');
     if (summary) autoGrow(summary);
 
-    /* content: keep Tab as indentation */
+    /* content: edit / rendered-markdown preview */
     const content = host.querySelector('[data-field=content]');
+    const mdView = host.querySelector('.md-view');
+    const mono = n.type === 'code' || CODE_EXT.test(n.path || '');
+    const renderPreview = () => {
+      const text = getNode(id)?.content || '';
+      if (!text.trim()) { mdView.innerHTML = '<div class="hint-text">Nothing here yet — switch to Edit to write content.</div>'; return; }
+      // code-like components render as a code block, prose renders as markdown
+      mdView.innerHTML = mono ? `<pre class="md-code"><code>${esc(text)}</code></pre>` : renderMarkdown(text);
+    };
+    const applyCMode = (mode) => {
+      for (const b of host.querySelectorAll('[data-cmode]')) b.classList.toggle('on', b.dataset.cmode === mode);
+      content.hidden = mode === 'preview';
+      mdView.hidden = mode !== 'preview';
+      if (mode === 'preview') renderPreview();
+    };
+    const savedMode = uiPref('contentMode');
+    applyCMode(['edit', 'preview'].includes(savedMode) ? savedMode : (n.content?.trim() ? 'preview' : 'edit'));
+    for (const b of host.querySelectorAll('[data-cmode]')) {
+      b.addEventListener('click', () => {
+        uiPref('contentMode', b.dataset.cmode);
+        applyCMode(b.dataset.cmode);
+      });
+    }
+
+    /* content editing: keep Tab as indentation */
     content?.addEventListener('keydown', (e) => {
       if (e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();

@@ -22,7 +22,7 @@ export function sampleProject() {
     path: extra.path || '', tags: extra.tags || [], summary: extra.summary || '', content: extra.content || '',
     x, y,
   });
-  const E = (from, to) => ({ id: uid(), from, to });
+  const E = (from, to, kind) => ({ id: uid(), from, to, ...(kind ? { kind } : {}) });
 
   const nodes = [
     /* ── top level ───────────────────────────────────────────── */
@@ -509,7 +509,7 @@ export function sampleProject() {
     // top level flow
     E(id.intake, id.planning), E(id.planning, id.research), E(id.research, id.synthesis), E(id.synthesis, id.delivery),
     E(id.orchestrator, id.planning), E(id.orchestrator, id.research), E(id.orchestrator, id.synthesis),
-    E(id.mission, id.orchestrator), E(id.pipeline, id.orchestrator),
+    E(id.mission, id.orchestrator, 'relation'), E(id.pipeline, id.orchestrator),
     // intake
     E(id.classifier, id.reqSchema),
     // planning
@@ -520,7 +520,7 @@ export function sampleProject() {
     // fact-checker internals
     E(id.claimExtract, id.verifier), E(id.protocol, id.verifier),
     // synthesis (includes a revision loop)
-    E(id.cite, id.writer), E(id.styleGuide, id.writer), E(id.writer, id.critic), E(id.critic, id.writer),
+    E(id.cite, id.writer), E(id.styleGuide, id.writer), E(id.writer, id.critic), E(id.critic, id.writer, 'callback'),
     // delivery
     E(id.contract, id.qaGate), E(id.qaGate, id.render),
     // orchestrator internals

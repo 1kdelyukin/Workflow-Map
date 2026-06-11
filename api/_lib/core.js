@@ -6,7 +6,7 @@ import './shim.js';
 import {
   normalizeProject, parseImportText, buildHandoff, exportProjectFile,
 } from '../../js/transfer.js';
-import { TYPES, TYPE_ORDER, VERSION, projectStats, blankProject } from '../../js/state.js';
+import { TYPES, TYPE_ORDER, EDGE_KINDS, EDGE_KIND_ORDER, VERSION, projectStats, blankProject } from '../../js/state.js';
 import { computeLayout } from '../../js/layout.js';
 import { uid } from '../../js/ui.js';
 
@@ -103,6 +103,7 @@ export function treeOf(p, { rootId = 'root', depth = 0 } = {}) {
       return {
         from: e.from, from_title: titleOf(e.from),
         to: e.to, to_title: titleOf(e.to),
+        kind: EDGE_KINDS[e.kind] ? e.kind : 'flow',
         layer: layer === 'root' ? 'root' : layer,
       };
     });
@@ -111,7 +112,7 @@ export function treeOf(p, { rootId = 'root', depth = 0 } = {}) {
     project: { id: p.id, name: p.name, description: p.description || '', updated_at: p.updatedAt },
     stats: statsOf(p),
     root: rootId,
-    note: 'Nesting under "components" is containment. "connections" are directed A → B links, always between siblings of one layer.',
+    note: 'Nesting under "components" is containment. "connections" are directed A → B links, always between siblings of one layer. Connection kinds: flow (feeds into / precedes / triggers), callback (returns or reports back, closing a loop), relation (non-directional association).',
     components,
     connections,
   };
@@ -120,8 +121,9 @@ export function treeOf(p, { rootId = 'root', depth = 0 } = {}) {
 export function componentOf(p, id, includeContent = true) {
   const n = requireNode(p, id);
   const kids = childrenOf(p, n.id);
-  const incoming = p.edges.filter((e) => e.to === n.id).map((e) => ({ id: e.from, title: nodeById(p, e.from)?.title }));
-  const outgoing = p.edges.filter((e) => e.from === n.id).map((e) => ({ id: e.to, title: nodeById(p, e.to)?.title }));
+  const kindOf = (e) => (EDGE_KINDS[e.kind] ? e.kind : 'flow');
+  const incoming = p.edges.filter((e) => e.to === n.id).map((e) => ({ id: e.from, title: nodeById(p, e.from)?.title, kind: kindOf(e) }));
+  const outgoing = p.edges.filter((e) => e.from === n.id).map((e) => ({ id: e.to, title: nodeById(p, e.to)?.title, kind: kindOf(e) }));
   const out = {
     id: n.id,
     type: n.type,
@@ -284,7 +286,7 @@ export function addComponents(p, comps, conns = []) {
   const connWarnings = [];
   for (const e of Array.isArray(conns) ? conns : []) {
     try {
-      addConnection(p, str(e?.from ?? e?.from_id), str(e?.to ?? e?.to_id));
+      addConnection(p, str(e?.from ?? e?.from_id), str(e?.to ?? e?.to_id), e?.kind ?? 'flow');
     } catch (err) {
       if (err instanceof ToolError) connWarnings.push(`Connection skipped: ${err.message}`);
       else throw err;
@@ -355,21 +357,34 @@ export function deleteComponents(p, ids) {
   return { removed, warnings };
 }
 
-export function addConnection(p, from, to) {
+export function addConnection(p, from, to, kind = 'flow') {
   const a = requireNode(p, from);
   const b = requireNode(p, to);
+  if (kind !== undefined && kind !== null && !EDGE_KINDS[kind]) {
+    throw new ToolError(`Unknown connection kind "${kind}". Valid kinds: ${EDGE_KIND_ORDER.join(', ')}.`);
+  }
+  const k = EDGE_KINDS[kind] ? kind : 'flow';
   if (from === to) throw new ToolError('A component cannot connect to itself.');
   if (a.parentId !== b.parentId) {
     throw new ToolError(
       `"${a.title}" and "${b.title}" are in different layers (connections must link siblings). ` +
       `Move one of them first, or connect their containers instead.`);
   }
-  if (p.edges.some((e) => e.from === from && e.to === to)) {
-    throw new ToolError(`"${a.title}" → "${b.title}" already exists.`);
+  const existing = p.edges.find((e) => e.from === from && e.to === to);
+  if (existing) {
+    const cur = EDGE_KINDS[existing.kind] ? existing.kind : 'flow';
+    if (cur === k) throw new ToolError(`"${a.title}" → "${b.title}" already exists (kind: ${cur}).`);
+    if (k === 'flow') delete existing.kind;
+    else existing.kind = k;
+    return {
+      connection: { from, from_title: a.title, to, to_title: b.title, kind: k },
+      note: `Connection already existed — changed its kind from ${cur} to ${k}.`,
+    };
   }
   const edge = { id: uid(), from, to };
+  if (k !== 'flow') edge.kind = k;
   p.edges.push(edge);
-  return { connection: { from, from_title: a.title, to, to_title: b.title } };
+  return { connection: { from, from_title: a.title, to, to_title: b.title, kind: k } };
 }
 
 export function removeConnection(p, from, to) {

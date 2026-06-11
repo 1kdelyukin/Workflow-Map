@@ -1,0 +1,17 @@
+{
+  "name": "agentmap",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A layered node-graph workspace for mapping AI-agent systems, with a REST + MCP server for AI assistants.",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "test": "node tests/roundtrip.test.mjs && node tests/mcp.test.mjs && node tests/api.test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

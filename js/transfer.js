@@ -40,9 +40,10 @@ const typeLabel = (t) => (TYPES[t] || TYPES.other).label;
 const inline = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 const edgeText = (e, titleOf) => {
-  if (e.kind === 'callback') return `${titleOf(e.from)} ⇢ ${titleOf(e.to)} _(callback)_`;
-  if (e.kind === 'relation') return `${titleOf(e.from)} ↔ ${titleOf(e.to)} _(relation)_`;
-  return `${titleOf(e.from)} → ${titleOf(e.to)}`;
+  const note = e.label ? ` — “${inline(e.label)}”` : '';
+  if (e.kind === 'callback') return `${titleOf(e.from)} ⇢ ${titleOf(e.to)} _(callback)_${note}`;
+  if (e.kind === 'relation') return `${titleOf(e.from)} ↔ ${titleOf(e.to)} _(relation)_${note}`;
+  return `${titleOf(e.from)} → ${titleOf(e.to)}${note}`;
 };
 
 export function buildHandoff(p, depth = 'standard') {
@@ -120,7 +121,7 @@ export function buildHandoff(p, depth = 'standard') {
     '| Documentation | Reference material, policies, schemas, or templates |',
     '| Other | Anything that does not fit the categories above |',
     '',
-    'Connections come in three kinds: `A → B` is **flow** (A feeds into, precedes, or triggers B), `A ⇢ B (callback)` means A returns or reports back to B (a response leg, usually closing a loop), and `A ↔ B (relation)` is a non-directional association. Components marked **(contains N)** have an internal sub-map listed under "Full hierarchy". Connections are scoped to the level where they are drawn: top-level arrows describe the macro flow; arrows inside a container describe its internal mechanics. `path`, `tags`, and summaries are author-written metadata.',
+    'Connections come in three kinds: `A → B` is **flow** (A feeds into, precedes, or triggers B), `A ⇢ B (callback)` means A returns or reports back to B (a response leg, usually closing a loop), and `A ↔ B (relation)` is a non-directional association. A quoted note after a connection is its author-written trigger/description. Components marked **(contains N)** have an internal sub-map listed under "Full hierarchy". Connections are scoped to the level where they are drawn: top-level arrows describe the macro flow; arrows inside a container describe its internal mechanics. `path`, `tags`, and summaries are author-written metadata.',
     '',
   );
 
@@ -398,6 +399,15 @@ export function normalizeProject(raw) {
     if (kind && kind !== 'flow') {
       if (EDGE_KINDS[kind]) edge.kind = kind;
       else warn(`Unknown connection kind "${kind}" → flow.`);
+    }
+    const label = str(re.label).trim().slice(0, 140);
+    if (label) edge.label = label;
+    if (Array.isArray(re.points)) {
+      const pts = re.points
+        .filter((pt) => pt && Number.isFinite(pt.x) && Number.isFinite(pt.y))
+        .slice(0, 32)
+        .map((pt) => ({ x: Math.round(pt.x), y: Math.round(pt.y) }));
+      if (pts.length) edge.points = pts;
     }
     p.edges.push(edge);
   }

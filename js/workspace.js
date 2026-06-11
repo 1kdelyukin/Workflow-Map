@@ -1,7 +1,7 @@
 // Project workspace shell: top bar (breadcrumbs, search, actions), legend, zoom pill,
 // minimap host, keyboard shortcuts, export dialog, and the help/shortcut reference.
 import {
-  state, on, emit, TYPES, TYPE_ORDER, childrenOf, crumbs, closeProject,
+  state, on, emit, TYPES, TYPE_ORDER, EDGE_KINDS, EDGE_KIND_ORDER, childrenOf, crumbs, closeProject,
   setParent, goUp, setSelection, deleteNodes, duplicateNodes, deleteEdge,
   toggleSnap, snapEnabled, setFilters, runUndo, projectStats,
   getNode, layerEdges, hasChildren, childCount,
@@ -36,6 +36,7 @@ export function initWorkspace(viewEl) {
       <button class="btn" data-act="export">${icon('download')}<span>Export</span></button>
       <div class="tool-group">
         <button class="icon-btn toggle" data-act="arrange" data-tip="Auto-arrange view · L">${icon('layout')}</button>
+        <button class="icon-btn toggle" data-act="ortho" data-tip="Grid-locked arrows · G">${icon('route')}</button>
         <button class="icon-btn" data-act="fit" data-tip="Zoom to fit · F">${icon('fit')}</button>
         ${state.canEdit ? `
         <button class="icon-btn toggle" data-act="snap" data-tip="Snapping · S (hold ⌥ to bypass)">${icon('magnet')}</button>` : ''}
@@ -82,6 +83,8 @@ export function initWorkspace(viewEl) {
     <div class="legend glass">
       <button class="legend-toggle icon-btn icon-btn-sm" data-tip="Collapse legend">${icon('chev-d')}</button>
       <div class="legend-items"></div>
+      <span class="legend-sep"></span>
+      <div class="legend-conns"></div>
       <button class="legend-clear" hidden>Clear</button>
     </div>`;
 
@@ -225,6 +228,14 @@ export function initWorkspace(viewEl) {
   };
   arrangeBtn.addEventListener('click', toggleArrange);
   arrangeBtn.classList.toggle('on', canvas.arrangeViewOn());
+  const orthoBtn = viewEl.querySelector('[data-act=ortho]');
+  const toggleOrtho = () => {
+    const on = canvas.toggleOrthoEdges();
+    orthoBtn.classList.toggle('on', on);
+    toast(on ? 'Grid-locked arrows on — right-angle routes that steer around cards.' : 'Grid-locked arrows off — curved connections.', { type: 'info', timeout: 2200 });
+  };
+  orthoBtn.addEventListener('click', toggleOrtho);
+  orthoBtn.classList.toggle('on', canvas.orthoOn());
   viewEl.querySelector('[data-act=signin]')?.addEventListener('click', () => { location.hash = '#welcome'; });
   snapBtn?.addEventListener('click', toggleSnap);
   themeBtn.addEventListener('click', () => { toggleTheme(); reflectTheme(); });
@@ -363,12 +374,13 @@ export function initWorkspace(viewEl) {
   on('node', renderCrumbs);          // renames may affect the trail
   on('graph', renderCrumbs);
 
-  /* ── legend (doubles as a type filter) ── */
+  /* ── legend: the map key. Types double as filters; the connection-kind
+     samples show what each arrow style means. ── */
   function renderLegend() {
     if (!state.project) return;
     const counts = projectStats(state.project).byType;
     legendItems.innerHTML = TYPE_ORDER.map((t) => `
-      <button class="legend-item${state.filters.has(t) ? ' on' : ''}" data-type="${t}" data-tip="${counts[t]} in project — click to focus">
+      <button class="legend-item${state.filters.has(t) ? ' on' : ''}" data-type="${t}" data-tip="${esc(TYPES[t].desc)} · ${counts[t]} in project · click to focus">
         <span class="legend-dot" style="background:var(--c-${t})"></span><span>${TYPES[t].label}</span>
       </button>`).join('');
     legendClear.hidden = state.filters.size === 0;
@@ -381,6 +393,20 @@ export function initWorkspace(viewEl) {
       });
     }
   }
+
+  /* mini line samples drawn exactly like the canvas edges */
+  const connSample = (k) => {
+    const line = { flow: '', callback: ' stroke-dasharray="4.5 3.4"', relation: ' stroke-dasharray="0.1 4.6"' }[k];
+    const head = {
+      flow: '<path d="M22.6 1.6 28.4 5 22.6 8.4 24 5Z" fill="currentColor" stroke="none"/>',
+      callback: '<path d="M23 1.8 28.2 5 23 8.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+      relation: '',
+    }[k];
+    const len = k === 'relation' ? 28 : 21.5;
+    return `<svg viewBox="0 0 30 10" width="30" height="10" aria-hidden="true"><path d="M1.5 5h${len}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"${line}/>${head}</svg>`;
+  };
+  viewEl.querySelector('.legend-conns').innerHTML = EDGE_KIND_ORDER.map((k) =>
+    `<span class="legend-conn" data-tip="${esc(EDGE_KINDS[k].label)} — ${esc(EDGE_KINDS[k].hint)} · click an arrow for details">${connSample(k)}<span>${EDGE_KINDS[k].label}</span></span>`).join('');
   on('filters', renderLegend);
   on('graph', renderLegend);
   legendClear.addEventListener('click', () => setFilters(new Set()));
@@ -518,6 +544,7 @@ export function initWorkspace(viewEl) {
       case 'p': case 'P': toggleFlow(); break;
       case 'n': case 'N': canvas.addNodeAtCenter('agent'); break;
       case 'f': case 'F': canvas.fit(); break;
+      case 'g': case 'G': toggleOrtho(); break;
       case 'l': case 'L': toggleArrange(); break;
       case 's': case 'S': toggleSnap(); break;
       case 'm': case 'M': setMinimap(mmHost.hidden); break;
@@ -651,7 +678,9 @@ export function openHelp() {
           ${row(K('dbl-click') + ' canvas', 'New node at cursor')}
           ${row(K('N'), 'New node at center')}
           ${row('drag from a side port', 'Connect nodes (drop on empty space to create + connect)')}
-          ${row('click a connection', 'Select it — switch its kind (flow / callback / relation) or remove it')}
+          ${row('click a connection', 'Open its info card — what it links, its kind and meaning, a trigger note')}
+          ${row(K('G'), 'Grid-locked arrows: right-angle routes that steer around cards')}
+          ${row('unlock shape', 'On a selected connection’s card (grid-locked mode) — then drag its segments to reshape it')}
           ${row(K('⇧', 'click'), 'Multi-select')}
           ${row(K('⇧', 'drag') + ' canvas', 'Marquee select')}
           ${row(K('⌘', 'D'), 'Duplicate selection')}

@@ -33,6 +33,13 @@ Connection (edge) kinds — `kind` is optional and defaults to `flow` (omit it f
 | `callback` | A returns or reports back to B (a response leg, usually closing a loop) | dashed, open arrowhead |
 | `relation` | non-directional association | dotted, no arrowhead |
 
+Other optional edge fields:
+
+| Field | Meaning |
+| --- | --- |
+| `label` | short note (≤ 140 chars) on what triggers or carries the connection — shown on the arrow in the app and quoted in handoff exports |
+| `points` | manual waypoints `[{ "x": n, "y": n }, …]` (≤ 32) for the user-drawn arrow shape in grid-locked mode — display-only routing data; **omit when generating** |
+
 A component (node):
 
 | Field | Meaning |

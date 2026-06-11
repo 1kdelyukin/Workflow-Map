@@ -104,6 +104,7 @@ export function treeOf(p, { rootId = 'root', depth = 0 } = {}) {
         from: e.from, from_title: titleOf(e.from),
         to: e.to, to_title: titleOf(e.to),
         kind: EDGE_KINDS[e.kind] ? e.kind : 'flow',
+        ...(e.label ? { label: e.label } : {}),
         layer: layer === 'root' ? 'root' : layer,
       };
     });
@@ -122,8 +123,8 @@ export function componentOf(p, id, includeContent = true) {
   const n = requireNode(p, id);
   const kids = childrenOf(p, n.id);
   const kindOf = (e) => (EDGE_KINDS[e.kind] ? e.kind : 'flow');
-  const incoming = p.edges.filter((e) => e.to === n.id).map((e) => ({ id: e.from, title: nodeById(p, e.from)?.title, kind: kindOf(e) }));
-  const outgoing = p.edges.filter((e) => e.from === n.id).map((e) => ({ id: e.to, title: nodeById(p, e.to)?.title, kind: kindOf(e) }));
+  const incoming = p.edges.filter((e) => e.to === n.id).map((e) => ({ id: e.from, title: nodeById(p, e.from)?.title, kind: kindOf(e), ...(e.label ? { label: e.label } : {}) }));
+  const outgoing = p.edges.filter((e) => e.from === n.id).map((e) => ({ id: e.to, title: nodeById(p, e.to)?.title, kind: kindOf(e), ...(e.label ? { label: e.label } : {}) }));
   const out = {
     id: n.id,
     type: n.type,

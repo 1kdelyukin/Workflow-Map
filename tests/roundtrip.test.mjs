@@ -6,6 +6,7 @@ const { sampleProject } = await import(base + 'sample.js');
 const { exportProjectFile, exportBackupFile, buildHandoff, parseImportText } = await import(base + 'transfer.js');
 const { computeLayout } = await import(base + 'layout.js');
 const { renderMarkdown } = await import(base + 'markdown.js');
+const { routeOrtho, simplify, withBends, polyMid } = await import(base + 'router.js');
 
 let failures = 0;
 const ok = (cond, label) => {
@@ -78,6 +79,46 @@ ok(std.text.includes('(callback)') && std.text.includes('(relation)'), 'handoff 
   ok(rk.warnings.some((w) => /connection kind/.test(w)), 'unknown kind warns');
   ok(!rk.projects[0].edges[0].kind, 'unknown kind normalized to flow');
   ok(!rk.projects[0].edges[1].kind, 'explicit "flow" normalized to implicit');
+}
+
+console.log('— connection notes & manual shapes');
+{
+  const pl = sampleProject();
+  pl.edges[0].label = 'fires on build success';
+  pl.edges[1].points = [{ x: 120.6, y: 48 }, { x: 120.6, y: 240 }];
+  const f = exportProjectFile(pl);
+  const rl = parseImportText(f.text, f.filename);
+  ok(rl.projects[0].edges[0].label === 'fires on build success', 'edge label survives round trip');
+  ok(eq(rl.projects[0].edges[1].points, [{ x: 121, y: 48 }, { x: 121, y: 240 }]), 'edge waypoints survive (rounded)');
+  ok(buildHandoff(pl, 'standard').text.includes('“fires on build success”'), 'handoff shows connection notes');
+  const bad = JSON.parse(f.text);
+  bad.project.edges[0].label = 42;
+  bad.project.edges[1].points = [{ x: 'a', y: 1 }, null, { x: 3, y: 4 }];
+  const rb = parseImportText(JSON.stringify(bad), 'bad.json');
+  ok(!rb.projects[0].edges[0].label, 'non-string label dropped');
+  ok(eq(rb.projects[0].edges[1].points, [{ x: 3, y: 4 }]), 'malformed waypoints filtered');
+}
+
+console.log('— orthogonal router');
+{
+  const isOrtho = (pts) => pts.slice(1).every((q, i) => q.x === pts[i].x || q.y === pts[i].y);
+  const g1 = { x: 0, y: 0, w: 216, h: 88 };
+  const g2 = { x: 600, y: 0, w: 216, h: 88 };
+  const wall = { x: 380, y: -200, w: 100, h: 488 };
+  const route = routeOrtho(g1, g2, [g1, g2, wall]);
+  ok(route.length >= 2 && isOrtho(route), 'route is orthogonal');
+  ok(route[0].x === 216 && route[route.length - 1].x === 600, 'route attaches to facing ports');
+  const M = 16; // router clearance minus tolerance
+  const clear = route.every((q) =>
+    !(q.x > wall.x - M && q.x < wall.x + wall.w + M && q.y > wall.y - M && q.y < wall.y + wall.h + M));
+  ok(clear, 'route corners stay clear of the blocking card');
+  const mid = polyMid(route);
+  ok(Number.isFinite(mid.x) && Number.isFinite(mid.y), 'midpoint finite');
+  ok(eq(simplify([{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 0 }, { x: 9, y: 0 }, { x: 9, y: 7 }]),
+    [{ x: 0, y: 0 }, { x: 9, y: 0 }, { x: 9, y: 7 }]), 'simplify drops duplicates + collinear points');
+  const bent = withBends({ x: 0, y: 50 }, { x: 1, y: 0 }, [{ x: 40, y: 120 }], { x: 200, y: 50 });
+  ok(isOrtho(bent), 'manual waypoints reconnect with right-angle bends');
+  ok(bent[0].x === 0 && bent[bent.length - 1].x === 200, 'manual route keeps its ports');
 }
 
 console.log('— markdown renderer');

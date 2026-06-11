@@ -9,13 +9,13 @@ export const VERSION = '1.2.0';
 export const SCHEMA = 1;
 
 export const TYPES = {
-  phase: { label: 'Phase', icon: 'flag' },
-  agent: { label: 'Agent', icon: 'spark' },
-  skill: { label: 'Skill', icon: 'wand' },
-  hook:  { label: 'Hook',  icon: 'hook' },
-  code:  { label: 'Code',  icon: 'code' },
-  doc:   { label: 'Documentation', icon: 'doc' },
-  other: { label: 'Other', icon: 'dot' },
+  phase: { label: 'Phase', icon: 'flag', desc: 'A stage of the overall workflow' },
+  agent: { label: 'Agent', icon: 'spark', desc: 'An autonomous AI worker with its own instructions' },
+  skill: { label: 'Skill', icon: 'wand', desc: 'A reusable capability or prompt module' },
+  hook:  { label: 'Hook',  icon: 'hook', desc: 'An automation trigger that runs at a set moment' },
+  code:  { label: 'Code',  icon: 'code', desc: 'A source file or script' },
+  doc:   { label: 'Documentation', icon: 'doc', desc: 'Reference material, schemas, or templates' },
+  other: { label: 'Other', icon: 'dot', desc: 'Anything that doesn’t fit the other types' },
 };
 export const TYPE_ORDER = ['phase', 'agent', 'skill', 'hook', 'code', 'doc', 'other'];
 
@@ -536,7 +536,12 @@ export function duplicateNodes(ids) {
     // copy edges fully inside the duplicated subtree
     for (const e of [...p.edges]) {
       if (map.has(e.from) && map.has(e.to)) {
-        p.edges.push({ id: uid(), from: map.get(e.from), to: map.get(e.to), ...(e.kind ? { kind: e.kind } : {}) });
+        p.edges.push({
+          id: uid(), from: map.get(e.from), to: map.get(e.to),
+          ...(e.kind ? { kind: e.kind } : {}),
+          ...(e.label ? { label: e.label } : {}),
+          ...(e.points ? { points: structuredClone(e.points) } : {}),
+        });
       }
     }
     clones.push(top);
@@ -564,6 +569,37 @@ export function setEdgeKind(id, kind) {
   if (!e || edgeKindOf(e) === kind) return;
   if (kind === 'flow') delete e.kind;
   else e.kind = kind;
+  markDirty();
+  emit('graph');
+}
+
+/* Short note on what triggers / carries the connection. Emits a light event
+   (not 'graph') so the editing input keeps focus while the canvas updates. */
+export function setEdgeLabel(id, label) {
+  const p = state.project;
+  if (!p || !guardEdit()) return;
+  const e = p.edges.find((x) => x.id === id);
+  if (!e) return;
+  const v = String(label ?? '').trim().slice(0, 140);
+  if ((e.label || '') === v) return;
+  if (v) e.label = v;
+  else delete e.label;
+  markDirty();
+  emit('edge:meta', { id });
+}
+
+/* Manual waypoints for grid-locked routing — interior corners of the polyline. */
+export function setEdgePoints(id, points) {
+  const p = state.project;
+  if (!p || !guardEdit()) return;
+  const e = p.edges.find((x) => x.id === id);
+  if (!e) return;
+  const pts = (Array.isArray(points) ? points : [])
+    .filter((pt) => pt && Number.isFinite(pt.x) && Number.isFinite(pt.y))
+    .slice(0, 32)
+    .map((pt) => ({ x: Math.round(pt.x), y: Math.round(pt.y) }));
+  if (pts.length) e.points = pts;
+  else delete e.points;
   markDirty();
   emit('graph');
 }

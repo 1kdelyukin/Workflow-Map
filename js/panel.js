@@ -178,6 +178,7 @@ export function initPanel(host) {
       <div class="conn-row">
         <span class="conn-dir ${kind === 'relation' ? 'rel' : out ? 'out' : 'in'}" data-tip="${tip}">${icon(kind === 'relation' ? 'edge-relation' : 'arrow-l')}</span>
         <button class="conn-name" data-goto="${esc(other.id)}">${esc(other.title)}</button>
+        ${e.label ? `<span class="conn-note" title="${esc(e.label)}">${esc(e.label)}</span>` : ''}
         ${kind !== 'flow' ? `<span class="conn-kind">${EDGE_KINDS[kind].label}</span>` : ''}
         <button class="icon-btn icon-btn-sm" data-unlink="${esc(e.id)}" aria-label="Remove connection">${icon('x')}</button>
       </div>`;
@@ -359,6 +360,7 @@ export function initPanel(host) {
   on('project:open', render);
   on('project:close', render);
   on('graph', () => { if (currentId || state.selection.size) render(); });
+  on('edge:meta', () => { if (currentId) render(); }); // connection notes show in Links
   on('node', ({ id, source }) => {
     // external edits to the open node (e.g. type changed elsewhere) refresh the panel
     if (source !== 'panel' && id === currentId) render();

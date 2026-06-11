@@ -33,6 +33,10 @@ const PATHS = {
   pause: '<path d="M5.4 3.4v9.2M10.6 3.4v9.2"/>',
   'step-f': '<path d="M3.4 3.6 9 8l-5.6 4.4ZM11.8 3.4v9.2"/>',
   'step-b': '<path d="M12.6 3.6 7 8l5.6 4.4ZM4.2 3.4v9.2"/>',
+  route: '<path d="M2 12.8h4.6a1.6 1.6 0 0 0 1.6-1.6V4.8a1.6 1.6 0 0 1 1.6-1.6h2.4"/><path d="M10.6 1.1 13.3 3.2l-2.7 2.1"/>',
+  lock: '<rect x="3.4" y="7.2" width="9.2" height="6.2" rx="1.7"/><path d="M5.7 7.2V5.1a2.3 2.3 0 0 1 4.6 0v2.1"/>',
+  unlock: '<rect x="3.4" y="7.2" width="9.2" height="6.2" rx="1.7"/><path d="M5.7 7.2V5.1a2.3 2.3 0 0 1 4.4-.9"/>',
+  reset: '<path d="M13 8.2a5 5 0 1 1-1.6-3.7"/><path d="M13.3 1.6v3h-3"/>',
   // connection-kind glyphs
   'edge-flow': '<path d="M2 8h9"/><path d="M8.4 4.9 11.5 8l-3.1 3.1"/>',
   'edge-callback': '<path d="M2 8h8.4" stroke-dasharray="3 2.6"/><path d="M8.4 4.9 11.5 8l-3.1 3.1"/>',

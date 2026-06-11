@@ -3,12 +3,14 @@
 import {
   state, on, emit, TYPES, getNode, childrenOf, childCount, layerEdges,
   addNode, addEdge, deleteEdge, setEdgeKind, EDGE_KINDS, EDGE_KIND_ORDER, edgeKindOf,
+  setEdgeLabel, setEdgePoints,
   setParent, setSelection, clearSelection,
   setView, getView, snapEnabled, markDirty, pushUndo, runUndo,
 } from './state.js';
 import { esc, clamp, toast, uiPref } from './ui.js';
 import { icon } from './icons.js';
 import { computeLayout } from './layout.js';
+import { routeOrtho, orthoPorts, withBends, simplify, polyToPath, polyMid, nearestSegment } from './router.js';
 
 const GRID = 24;       // dot spacing
 const SNAP = 12;       // grid snap step
@@ -38,9 +40,11 @@ export function initCanvas(host) {
           <g class="edge-g"></g>
         </svg>
         <div class="node-layer"></div>
+        <div class="label-layer"></div>
         <div class="flow-layer"></div>
         <svg class="overlay-svg" width="2" height="2">
           <g class="guide-g"></g>
+          <g class="handle-g"></g>
           <path class="temp-edge" hidden></path>
           <rect class="marquee" vector-effect="non-scaling-stroke" hidden></rect>
         </svg>
@@ -55,8 +59,10 @@ export function initCanvas(host) {
   const world = host.querySelector('.world');
   const edgeG = host.querySelector('.edge-g');
   const nodeLayer = host.querySelector('.node-layer');
+  const labelLayer = host.querySelector('.label-layer');
   const flowLayer = host.querySelector('.flow-layer');
   const guideG = host.querySelector('.guide-g');
+  const handleG = host.querySelector('.handle-g');
   const tempEdge = host.querySelector('.temp-edge');
   const marqueeEl = host.querySelector('.marquee');
   const emptyHint = host.querySelector('.empty-hint');
@@ -66,11 +72,19 @@ export function initCanvas(host) {
   let geom = new Map();      // id -> {x,y,w,h,type}
   let edgeList = [];
   let edgeMids = new Map();  // edge id -> {x,y}
+  let edgePolys = new Map(); // edge id -> orthogonal polyline (grid-locked mode)
+  let labelEls = new Map();  // edge id -> label chip element
   let gesture = null;
   let spaceDown = false;
   let edgeToolsEl = null;
+  let edgeCardSig = null;    // what the open edge card was built for
   let viewAnim = null;
   const touchPts = new Map();
+
+  /* grid-locked arrows: right-angle, grid-snapped routes that avoid cards.
+     Presentation preference like arrange view — never changes saved data. */
+  let orthoView = uiPref('orthoEdges') === '1';
+  let shapeEditId = null;    // edge currently unlocked for segment dragging
 
   /* ════════ coordinates & view ════════ */
 
@@ -238,12 +252,14 @@ export function initCanvas(host) {
     applyArrangedPositions();
 
     edgeList = layerEdges(state.parentId);
+    edgePolys.clear();
     edgeG.innerHTML = edgeList.map((e) => `
       <g class="edge k-${edgeKindOf(e)}" data-id="${esc(e.id)}">
         <path class="edge-hit"></path>
         <path class="edge-line"></path>
       </g>`).join('');
     for (const e of edgeList) updateEdgePath(e);
+    rebuildLabels();
 
     emptyHint.hidden = nodes.length > 0;
     refreshFlow();
@@ -285,20 +301,72 @@ export function initCanvas(host) {
     return { d: `M ${a.x} ${a.y} C ${h1.x} ${h1.y}, ${h2.x} ${h2.y}, ${b.x} ${b.y}`, mid };
   }
 
+  function computeEdgePath(e, g1, g2) {
+    if (!orthoView) return { ...edgePathFor(g1, g2), pts: null };
+    let pts;
+    if (e.points?.length) {
+      const { a, da, b } = orthoPorts(g1, g2);
+      pts = withBends(a, da, e.points, b);
+    } else {
+      pts = routeOrtho(g1, g2, [...geom.values()]);
+    }
+    return { d: polyToPath(pts), mid: polyMid(pts), pts };
+  }
+
   function updateEdgePath(e) {
     const g1 = geom.get(e.from), g2 = geom.get(e.to);
     const g = edgeG.querySelector(`.edge[data-id="${cssEsc(e.id)}"]`);
     if (!g1 || !g2 || !g) return;
-    const { d, mid } = edgePathFor(g1, g2);
+    const { d, mid, pts } = computeEdgePath(e, g1, g2);
     edgeMids.set(e.id, mid);
+    if (pts) edgePolys.set(e.id, pts);
+    else edgePolys.delete(e.id);
     for (const p of g.children) p.setAttribute('d', d);
     if (state.selectedEdge === e.id) positionEdgeTools();
+    if (shapeEditId === e.id) renderHandles();
     positionFlowBadge(e.id);
+    positionEdgeLabel(e.id);
+  }
+
+  /* in grid-locked mode a moving card changes other edges' routes too —
+     refresh the rest at a gentle cadence, with a full pass on drag end */
+  let rerouteTimer = null;
+  const rerouteAll = () => { for (const e of edgeList) updateEdgePath(e); };
+  function scheduleReroute() {
+    if (!orthoView || rerouteTimer) return;
+    rerouteTimer = setTimeout(() => {
+      rerouteTimer = null;
+      if (orthoView) rerouteAll();
+    }, 120);
   }
 
   const updateEdgesTouching = (ids) => {
     for (const e of edgeList) if (ids.has(e.from) || ids.has(e.to)) updateEdgePath(e);
+    if (orthoView) scheduleReroute();
   };
+
+  /* ── note chips on labeled connections ── */
+
+  function rebuildLabels() {
+    labelLayer.innerHTML = edgeList.filter((e) => e.label).map((e) =>
+      `<div class="edge-label glass" data-edge="${esc(e.id)}">${esc(e.label)}</div>`).join('');
+    labelEls = new Map([...labelLayer.querySelectorAll('.edge-label')].map((el) => [el.dataset.edge, el]));
+    for (const id of labelEls.keys()) positionEdgeLabel(id);
+    syncLabelVisibility();
+  }
+
+  function positionEdgeLabel(id) {
+    const el = labelEls.get(id);
+    const m = edgeMids.get(id);
+    if (!el || !m) return;
+    el.style.left = m.x + 'px';
+    el.style.top = (m.y - 12) + 'px';
+  }
+
+  // the selected edge's note lives on its card; during playback badges take over
+  function syncLabelVisibility() {
+    for (const [id, el] of labelEls) el.classList.toggle('hide', id === state.selectedEdge || flowSeq !== null);
+  }
 
   function renderOne(id) {
     const n = getNode(id);
@@ -323,11 +391,13 @@ export function initCanvas(host) {
   /* ════════ selection, filters, edge delete button ════════ */
 
   function applySelection() {
+    if (shapeEditId && shapeEditId !== state.selectedEdge) shapeEditId = null;
     for (const [id, el] of nodeEls) el.classList.toggle('sel', state.selection.has(id));
     const byEdgeId = new Map(edgeList.map((e) => [e.id, e]));
     for (const g of edgeG.children) {
       const sel = g.dataset.id === state.selectedEdge;
       g.classList.toggle('sel', sel);
+      g.classList.toggle('shaping', g.dataset.id === shapeEditId);
       const line = g.querySelector('.edge-line');
       const e = byEdgeId.get(g.dataset.id);
       if (!line || !e) continue;
@@ -336,35 +406,101 @@ export function initCanvas(host) {
       else line.removeAttribute('marker-end');
     }
     positionEdgeTools();
+    renderHandles();
+    syncLabelVisibility();
   }
 
-  /* floating toolbar at the midpoint of the selected edge: switch its kind, or delete it */
+  /* ── info card on the selected connection ──
+     What it links, what the kind means, an editable trigger note, and (in
+     grid-locked mode) the shape lock that enables segment dragging. */
+
+  function edgeCardHTML(e) {
+    const kind = edgeKindOf(e);
+    const k = EDGE_KINDS[kind];
+    const from = getNode(e.from), to = getNode(e.to);
+    const shaping = shapeEditId === e.id;
+    return `
+      <div class="ec-head">
+        <span class="ec-end" title="${esc(from?.title || '')}">${esc(from?.title) || 'Untitled'}</span>
+        <span class="ec-glyph">${icon('edge-' + kind)}</span>
+        <span class="ec-end ec-to" title="${esc(to?.title || '')}">${esc(to?.title) || 'Untitled'}</span>
+        ${state.canEdit ? `<button class="ec-del" data-tip="Remove connection" aria-label="Remove connection">${icon('trash')}</button>` : ''}
+      </div>
+      ${state.canEdit ? `
+      <div class="ec-kinds" role="radiogroup">
+        ${EDGE_KIND_ORDER.map((kk) => `<button class="ec-kind${kk === kind ? ' on' : ''}" data-kind="${kk}">${icon('edge-' + kk)}<span>${EDGE_KINDS[kk].label}</span></button>`).join('')}
+      </div>` : ''}
+      <div class="ec-hint">${k.label} — ${k.hint}.</div>
+      ${state.canEdit
+        ? `<input class="ec-note" placeholder="What triggers this? Add a note…" maxlength="140" value="${esc(e.label || '')}" spellcheck="false" />`
+        : (e.label ? `<div class="ec-note-ro">“${esc(e.label)}”</div>` : '')}
+      ${state.canEdit && orthoView ? `
+      <div class="ec-foot">
+        <button class="ec-shape${shaping ? ' on' : ''}" data-tip="${shaping ? 'Lock the shape again' : 'Unlock, then drag the line’s segments to reshape it'}">
+          ${icon(shaping ? 'unlock' : 'lock')}<span>${shaping ? 'Shaping — drag segments' : 'Shape locked'}</span>
+        </button>
+        ${e.points?.length ? `<button class="ec-reset" data-tip="Discard the custom shape and route automatically">${icon('reset')}<span>Auto</span></button>` : ''}
+      </div>` : ''}`;
+  }
+
   function positionEdgeTools() {
     const e = state.selectedEdge ? edgeList.find((x) => x.id === state.selectedEdge) : null;
     if (!e || !edgeMids.has(e.id)) {
       edgeToolsEl?.remove();
       edgeToolsEl = null;
+      edgeCardSig = null;
       return;
     }
     if (!edgeToolsEl) {
       edgeToolsEl = document.createElement('div');
-      edgeToolsEl.className = 'edge-tools glass';
-      edgeToolsEl.innerHTML = EDGE_KIND_ORDER.map((k) =>
-        `<button class="et-kind" data-kind="${k}" data-tip="${EDGE_KINDS[k].label} — ${EDGE_KINDS[k].hint}">${icon('edge-' + k)}</button>`).join('')
-        + `<span class="et-sep"></span><button class="et-del" data-tip="Remove connection">${icon('x')}</button>`;
+      edgeToolsEl.className = 'edge-card glass';
       edgeToolsEl.addEventListener('pointerdown', (ev) => ev.stopPropagation());
       edgeToolsEl.addEventListener('click', (ev) => {
-        const kb = ev.target.closest('.et-kind');
+        const kb = ev.target.closest('.ec-kind');
         if (kb) { setEdgeKind(state.selectedEdge, kb.dataset.kind); return; }
-        if (ev.target.closest('.et-del')) deleteEdge(state.selectedEdge);
+        if (ev.target.closest('.ec-del')) { deleteEdge(state.selectedEdge); return; }
+        if (ev.target.closest('.ec-reset')) { setEdgePoints(state.selectedEdge, []); return; }
+        if (ev.target.closest('.ec-shape')) {
+          shapeEditId = shapeEditId === state.selectedEdge ? null : state.selectedEdge;
+          edgeCardSig = null;
+          applySelection();
+        }
+      });
+      edgeToolsEl.addEventListener('input', (ev) => {
+        if (ev.target.matches('.ec-note')) setEdgeLabel(state.selectedEdge, ev.target.value);
+      });
+      edgeToolsEl.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && ev.target.matches('.ec-note')) {
+          ev.stopPropagation();
+          ev.target.blur();
+        }
       });
       world.appendChild(edgeToolsEl);
     }
-    const kind = edgeKindOf(e);
-    for (const b of edgeToolsEl.querySelectorAll('.et-kind')) b.classList.toggle('on', b.dataset.kind === kind);
+    // rebuilding while typing would steal focus — only rebuild when the card's
+    // structure changed (note text alone doesn't count)
+    const sig = [e.id, edgeKindOf(e), e.points?.length ? 1 : 0, shapeEditId === e.id ? 1 : 0].join('|');
+    if (edgeCardSig !== sig) {
+      edgeToolsEl.innerHTML = edgeCardHTML(e);
+      edgeCardSig = sig;
+    }
     const m = edgeMids.get(e.id);
     edgeToolsEl.style.left = m.x + 'px';
     edgeToolsEl.style.top = m.y + 'px';
+  }
+
+  /* drag affordances on the unlocked edge's segments */
+  function renderHandles() {
+    const pts = shapeEditId && orthoView && state.canEdit && state.selectedEdge === shapeEditId
+      ? edgePolys.get(shapeEditId) : null;
+    if (!pts) { handleG.innerHTML = ''; return; }
+    let h = '';
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i], q = pts[i + 1];
+      if (Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < 16) continue;
+      h += `<circle class="edge-handle" cx="${(p.x + q.x) / 2}" cy="${(p.y + q.y) / 2}" r="4"/>`;
+    }
+    handleG.innerHTML = h;
   }
 
   function applyFilters() {
@@ -379,6 +515,7 @@ export function initCanvas(host) {
       if (!g) continue;
       const dim = active && (!f.has(geom.get(e.from)?.type) || !f.has(geom.get(e.to)?.type));
       g.classList.toggle('dim', dim);
+      labelEls.get(e.id)?.classList.toggle('dim', dim);
     }
   }
 
@@ -471,6 +608,7 @@ export function initCanvas(host) {
   function buildFlowBadges() {
     flowLayer.innerHTML = '';
     flowBadges.clear();
+    syncLabelVisibility();
     if (!flowSeq) { renderFlowState(); return; }
     flowSeq.forEach((eid, i) => {
       const el = document.createElement('div');
@@ -539,7 +677,7 @@ export function initCanvas(host) {
   const emitMoved = coalesce(() => emit('moved'));
 
   function startPan(e, opts = {}) {
-    gesture = { type: 'pan', last: { x: e.clientX, y: e.clientY }, moved: false, clickClears: !!opts.clickClears, pointerId: e.pointerId };
+    gesture = { type: 'pan', last: { x: e.clientX, y: e.clientY }, moved: false, clickClears: !!opts.clickClears, edgeId: opts.edgeId || null, pointerId: e.pointerId };
     try { viewport.setPointerCapture(e.pointerId); } catch { /* synthetic pointers */ }
     viewport.classList.add('grabbing');
     e.preventDefault();
@@ -616,6 +754,40 @@ export function initCanvas(host) {
     e.preventDefault();
   }
 
+  /* segment dragging on an unlocked, grid-locked edge: grab the nearest
+     segment and slide it perpendicular, snapped to the grid */
+  function startSegDrag(e, id) {
+    const poly = edgePolys.get(id);
+    if (!poly || poly.length < 2) return;
+    const w = toWorld(e);
+    const pts = poly.map((p) => ({ x: p.x, y: p.y }));
+    let i = nearestSegment(pts, w);
+    // port-adjacent segments split first, so the ports themselves never move
+    if (i === pts.length - 2) pts.splice(pts.length - 1, 0, { ...pts[pts.length - 1] });
+    if (i === 0) { pts.splice(1, 0, { ...pts[0] }); i = 1; }
+    const horiz = pts[i].y === pts[i + 1].y;
+    gesture = {
+      type: 'edgeseg', id, pts, i, horiz, pointerId: e.pointerId,
+      startW: w, base: horiz ? pts[i].y : pts[i].x, moved: false,
+    };
+    try { viewport.setPointerCapture(e.pointerId); } catch { /* synthetic pointers */ }
+    e.preventDefault();
+  }
+
+  function previewEdgePoly(id, pts) {
+    const g = edgeG.querySelector(`.edge[data-id="${cssEsc(id)}"]`);
+    if (!g) return;
+    const sp = simplify(pts);
+    const d = polyToPath(sp);
+    for (const p of g.children) p.setAttribute('d', d);
+    edgeMids.set(id, polyMid(sp));
+    edgePolys.set(id, sp);
+    positionEdgeTools();
+    renderHandles();
+    positionFlowBadge(id);
+    positionEdgeLabel(id);
+  }
+
   function onDown(e) {
     stopViewAnim();
     if (e.pointerType === 'touch') {
@@ -625,14 +797,23 @@ export function initCanvas(host) {
     if (gesture) return;
     if (e.button === 1 || (e.button === 0 && spaceDown)) { startPan(e); return; }
     if (e.button !== 0) return;
-    if (e.target.closest('.edge-tools')) return;
+    if (e.target.closest('.edge-card')) return;
     const portEl = e.target.closest('.port');
     if (portEl) { startPort(e, portEl); return; }
     if (e.target.closest('.node-kids')) return; // click navigates; no drag
     const nodeEl = e.target.closest('.node');
     if (nodeEl) { startNodeInteraction(e, nodeEl); return; }
-    if (e.shiftKey) startMarquee(e);
-    else startPan(e, { clickClears: true });
+    const edgeEl = e.target.closest('.edge');
+    if (edgeEl && state.canEdit && orthoView && shapeEditId && edgeEl.dataset.id === shapeEditId) {
+      startSegDrag(e, shapeEditId);
+      return;
+    }
+    if (e.shiftKey) { startMarquee(e); return; }
+    // pointer capture retargets the composed click to the viewport, so edge
+    // selection rides on the gesture: a clean press on a line or its note
+    // chip selects it on pointerup
+    const edgeId = edgeEl?.dataset.id || e.target.closest('.edge-label')?.dataset.edge || null;
+    startPan(e, { clickClears: true, edgeId });
   }
 
   function beginPinch() {
@@ -727,6 +908,19 @@ export function initCanvas(host) {
       return;
     }
 
+    if (gesture.type === 'edgeseg') {
+      const w = toWorld(e);
+      const d = gesture.horiz ? w.y - gesture.startW.y : w.x - gesture.startW.x;
+      if (!gesture.moved && Math.abs(d) * view.z < 3) return;
+      gesture.moved = true;
+      const v = snap12(gesture.base + d);
+      const { pts, i } = gesture;
+      if (gesture.horiz) { pts[i].y = v; pts[i + 1].y = v; }
+      else { pts[i].x = v; pts[i + 1].x = v; }
+      previewEdgePoly(gesture.id, pts);
+      return;
+    }
+
     if (gesture.type === 'marquee') {
       const w = toWorld(e);
       const x = Math.min(w.x, gesture.start.x), y = Math.min(w.y, gesture.start.y);
@@ -772,7 +966,10 @@ export function initCanvas(host) {
     viewport.classList.remove('grabbing');
 
     if (g.type === 'pan') {
-      if (g.clickClears && !g.moved) clearSelection();
+      if (g.clickClears && !g.moved) {
+        if (g.edgeId) setSelection([], { edge: g.edgeId });
+        else clearSelection();
+      }
       return;
     }
     if (g.type === 'toggle') {
@@ -784,8 +981,18 @@ export function initCanvas(host) {
     if (g.type === 'drag') {
       for (const i of g.ids) nodeEls.get(i)?.classList.remove('dragging');
       guideG.innerHTML = '';
-      if (g.moved) { markDirty(); emitMoved(); }
-      else setSelection([g.primary]); // clean click: open the panel
+      if (g.moved) {
+        markDirty();
+        emitMoved();
+        if (orthoView) rerouteAll(); // settle routes around the cards' final spots
+      } else setSelection([g.primary]); // clean click: open the panel
+      return;
+    }
+    if (g.type === 'edgeseg') {
+      if (g.moved) {
+        const sp = simplify(g.pts);
+        setEdgePoints(g.id, sp.slice(1, -1)); // interior corners only — ports stay attached
+      }
       return;
     }
     if (g.type === 'marquee') {
@@ -813,6 +1020,10 @@ export function initCanvas(host) {
   function cancelGesture() {
     if (!gesture) return;
     if (gesture.type === 'drag' && gesture.moved) restoreDragOrigins();
+    if (gesture.type === 'edgeseg' && gesture.moved) {
+      const e = edgeList.find((x) => x.id === gesture.id);
+      if (e) updateEdgePath(e); // restore the saved route
+    }
     if (gesture.type === 'port') {
       tempEdge.hidden = true;
       nodeEls.get(gesture.target)?.classList.remove('drop-ok');
@@ -857,7 +1068,7 @@ export function initCanvas(host) {
 
   viewport.addEventListener('dblclick', (e) => {
     if (performance.now() < suppressDblclickUntil) return; // handled as a double-press already
-    if (e.target.closest('.port') || e.target.closest('.edge-tools')) return;
+    if (e.target.closest('.port') || e.target.closest('.edge-card') || e.target.closest('.edge-label')) return;
     const nodeEl = e.target.closest('.node');
     if (nodeEl) {
       // double-click anywhere on a card: containers open, leaves focus the title
@@ -877,10 +1088,14 @@ export function initCanvas(host) {
     if (k) { e.stopPropagation(); setParent(k.dataset.open); }
   });
 
-  /* edge selection */
+  /* edge selection — clicking the line or its note chip opens the info card */
   edgeG.addEventListener('click', (e) => {
     const g = e.target.closest('.edge');
     if (g) setSelection([], { edge: g.dataset.id });
+  });
+  labelLayer.addEventListener('click', (e) => {
+    const el = e.target.closest('.edge-label');
+    if (el) setSelection([], { edge: el.dataset.edge });
   });
 
   /* space-to-pan + esc-to-cancel */
@@ -911,6 +1126,7 @@ export function initCanvas(host) {
   on('node', ({ id }) => renderOne(id));
   on('selection', applySelection);
   on('filters', applyFilters);
+  on('edge:meta', () => { rebuildLabels(); applyFilters(); });
   on('locate', (id) => {
     if (!nodeEls.has(id)) return;
     api.centerOnNode(id);
@@ -923,6 +1139,12 @@ export function initCanvas(host) {
     nodeEls.clear();
     edgeToolsEl?.remove();
     edgeToolsEl = null;
+    edgeCardSig = null;
+    shapeEditId = null;
+    edgePolys.clear();
+    labelLayer.innerHTML = '';
+    labelEls.clear();
+    handleG.innerHTML = '';
     flowSeq = null;
     flowIdx = 0;
     flowLayer.innerHTML = '';
@@ -995,6 +1217,15 @@ export function initCanvas(host) {
       return arrangeView;
     },
     arrangeViewOn: () => arrangeView,
+    toggleOrthoEdges() {
+      orthoView = !orthoView;
+      uiPref('orthoEdges', orthoView ? '1' : '0');
+      shapeEditId = null;
+      edgeCardSig = null;
+      rebuild();
+      return orthoView;
+    },
+    orthoOn: () => orthoView,
     flow: {
       get active() { return flowSeq !== null; },
       get length() { return flowSeq ? flowSeq.length : 0; },

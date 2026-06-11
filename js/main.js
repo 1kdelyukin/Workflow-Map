@@ -65,6 +65,11 @@ function route() {
     showLanding();
     return;
   }
+  // private deployments have no guest browsing — viewers stay on the landing page
+  if (landingAvailable && state.privateMode) {
+    showLanding();
+    return;
+  }
   if (state.project) closeProject();
   else showLibrary();
 }
@@ -106,6 +111,7 @@ window.addEventListener('unhandledrejection', (e) => surface(e.reason?.message |
   const remote = await probeRemote();
   if (remote) {
     state.remoteAvailable = true;
+    state.privateMode = remote.private;
     enableRemote();
     try {
       const me = await authMe();
@@ -116,7 +122,7 @@ window.addEventListener('unhandledrejection', (e) => surface(e.reason?.message |
     }
     landingAvailable = !state.canEdit;
   }
-  document.body.classList.toggle('view-only', remote && !state.canEdit);
+  document.body.classList.toggle('view-only', !!remote && !state.canEdit);
 
   await boot();
 
@@ -125,9 +131,9 @@ window.addEventListener('unhandledrejection', (e) => surface(e.reason?.message |
   if (landingAvailable) initLanding(viewLanding);
   wireDropImport();
 
-  if (remote) {
+  if (remote && (state.canEdit || !state.privateMode)) {
     startRemoteSync();
-  } else if (state.storage === 'local') {
+  } else if (!remote && state.storage === 'local') {
     toast('IndexedDB is unavailable — using basic browser storage. Back up regularly.', { type: 'warn', timeout: 9000 });
   }
 

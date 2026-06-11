@@ -2,7 +2,7 @@
 // PUT    /api/projects/:id → owner session or API token. Optional X-AgentMap-Version
 //                            header enables optimistic concurrency: stale → 409 + current copy.
 // DELETE /api/projects/:id → owner session or API token.
-import { requireWrite } from '../_lib/auth.js';
+import { requireWrite, requireRead } from '../_lib/auth.js';
 import { getStore } from '../_lib/store.js';
 import { normalizeProject } from '../_lib/core.js';
 
@@ -14,6 +14,7 @@ export default async function handler(req, res) {
   if (!id) { res.status(400).json({ error: 'Missing project id.' }); return; }
 
   if (req.method === 'GET') {
+    if (!(await requireRead(req, res, store))) return;
     const row = await store.get(id);
     if (!row) { res.status(404).json({ error: `No project with id "${id}".` }); return; }
     res.status(200).json({ ...row.data, version: row.version });

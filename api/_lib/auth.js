@@ -69,3 +69,16 @@ export async function requireWrite(req, res, store) {
   res.status(401).json({ error: 'Sign in (or use the API token) to make changes.' });
   return false;
 }
+
+/* ── read authorization: public by default; AGENTMAP_PRIVATE=1 locks reads
+      to the owner session / bearer token as well ── */
+
+export const privateMode = () => /^(1|true|yes)$/i.test(process.env.AGENTMAP_PRIVATE || '');
+
+export async function requireRead(req, res, store) {
+  if (!privateMode()) return true;
+  const result = await canWrite(req, store); // same credentials grant reads
+  if (result.ok) return true;
+  res.status(401).json({ error: 'This workspace is private — sign in to view it.' });
+  return false;
+}

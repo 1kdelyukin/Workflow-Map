@@ -35,8 +35,7 @@ export function initWorkspace(viewEl) {
            <button class="btn btn-primary" data-act="signin"><span>Sign in</span></button>`}
       <button class="btn" data-act="export">${icon('download')}<span>Export</span></button>
       <div class="tool-group">
-        ${state.canEdit ? `
-        <button class="icon-btn" data-act="autolayout" data-tip="Auto-arrange · L">${icon('layout')}</button>` : ''}
+        <button class="icon-btn toggle" data-act="arrange" data-tip="Auto-arrange view · L">${icon('layout')}</button>
         <button class="icon-btn" data-act="fit" data-tip="Zoom to fit · F">${icon('fit')}</button>
         ${state.canEdit ? `
         <button class="icon-btn toggle" data-act="snap" data-tip="Snapping · S (hold ⌥ to bypass)">${icon('magnet')}</button>` : ''}
@@ -207,7 +206,14 @@ export function initWorkspace(viewEl) {
   /* ── top bar actions ── */
   viewEl.querySelector('[data-act=library]').addEventListener('click', () => closeProject());
   viewEl.querySelector('[data-act=fit]').addEventListener('click', () => canvas.fit());
-  viewEl.querySelector('[data-act=autolayout]')?.addEventListener('click', () => canvas.runAutoLayout());
+  const arrangeBtn = viewEl.querySelector('[data-act=arrange]');
+  const toggleArrange = () => {
+    const on = canvas.toggleArrangeView();
+    arrangeBtn.classList.toggle('on', on);
+    toast(on ? 'Auto-arrange view on — positions are not changed.' : 'Auto-arrange view off.', { type: 'info', timeout: 2000 });
+  };
+  arrangeBtn.addEventListener('click', toggleArrange);
+  arrangeBtn.classList.toggle('on', canvas.arrangeViewOn());
   viewEl.querySelector('[data-act=signin]')?.addEventListener('click', () => { location.hash = '#welcome'; });
   snapBtn?.addEventListener('click', toggleSnap);
   themeBtn.addEventListener('click', () => { toggleTheme(); reflectTheme(); });
@@ -419,7 +425,7 @@ export function initWorkspace(viewEl) {
         break;
       case 'n': case 'N': canvas.addNodeAtCenter('agent'); break;
       case 'f': case 'F': canvas.fit(); break;
-      case 'l': case 'L': canvas.runAutoLayout(); break;
+      case 'l': case 'L': toggleArrange(); break;
       case 's': case 'S': toggleSnap(); break;
       case 'm': case 'M': setMinimap(mmHost.hidden); break;
       case 't': case 'T': toggleTheme(); reflectTheme(); break;
@@ -556,7 +562,7 @@ export function openHelp() {
           ${row(K('⌘', 'Z'), 'Undo last delete or auto-arrange')}
           ${row(K('S'), 'Toggle snapping')}
           ${row(K('⌥', 'drag'), 'Bypass snapping')}
-          ${row(K('L'), 'Auto-arrange layer')}
+          ${row(K('L'), 'Auto-arrange view (display only — saved positions are untouched)')}
           ${row(K('T'), 'Light / dark theme')}
         </div>
       </div>

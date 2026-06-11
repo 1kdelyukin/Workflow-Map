@@ -22,7 +22,7 @@ Two ways to run it:
   - Backup — every project in one file, restorable in bulk.
   - **AI handoff (`.md`)** — a self-describing document another AI can read directly, at three depths: *Overview*, *Standard*, *Full*. Standard/Full embed the complete project JSON, so they re-import losslessly.
   - Drag & drop any of these onto the window to import; the importer validates, repairs, and reports what it fixed.
-- **Extras** — global search (`/` or `⌘K`), legend that doubles as a type filter, auto-layout (`L`), minimap, shortcut reference (`?`), save-status indicator, sample project on first run.
+- **Extras** — global search (`/` or `⌘K`), legend that doubles as a type filter, **auto-arrange view** (`L`, a display-only toggle that never touches saved positions — available to viewers too), minimap, shortcut reference (`?`), save-status indicator, sample project on first run.
 
 ## Quick start (local)
 
@@ -40,6 +40,7 @@ This serves the app **and** the API/MCP endpoints with file-based storage — th
 3. Environment variables:
    - `AGENTMAP_TOKEN` — any long random string; the API key AI assistants use for MCP.
    - `AGENTMAP_OWNER_EMAIL` — the one email allowed to register (defaults to `1kdelyukin@gmail.com`).
+   - `AGENTMAP_PRIVATE` — optional; set to `1` to require sign-in even for viewing (no guest mode).
 4. Deploy. Open the site → the landing page asks you to **create your password on first sign-in**. After that, registration is closed permanently and the same card is a normal sign-in.
 
 The tables are created automatically on first use. Make a habit of **Library → ⋯ → Back up all projects** regardless of where data lives — free-tier databases deserve backups.
@@ -52,7 +53,7 @@ The tables are created automatically on first use. Make a habit of **Library →
 | Guests (no sign-in) | browse and export everything, edit nothing |
 | AI assistants (bearer token) | full read/write over MCP and REST |
 
-Under the hood: the password is stored as a salted **scrypt** hash; sessions are stateless **HMAC-signed tokens** in an `HttpOnly` + `SameSite=Lax` cookie (the signing secret is generated once and kept in the database); cookie-authenticated writes additionally verify the request `Origin`; login/registration attempts are rate-limited with constant-time comparisons and generic errors; all responses carry `nosniff` / frame-deny / referrer-policy headers. Reads are public by design — that is what makes guest view-only mode work. If you want a fully private deployment, don't share the URL, or put Vercel's password protection in front.
+Under the hood: the password is stored as a salted **scrypt** hash; sessions are stateless **HMAC-signed tokens** in an `HttpOnly` + `SameSite=Lax` cookie (the signing secret is generated once and kept in the database); cookie-authenticated writes additionally verify the request `Origin`; login/registration attempts are rate-limited with constant-time comparisons and generic errors; all responses carry `nosniff` / frame-deny / referrer-policy headers. Reads are public by default — that is what makes guest view-only mode work. Set `AGENTMAP_PRIVATE=1` to lock viewing behind sign-in as well (the landing page then has no guest option).
 
 ## Connect an AI assistant (MCP)
 

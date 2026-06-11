@@ -185,5 +185,43 @@ try {
   await rm(dataDir, { recursive: true, force: true });
 }
 
+console.log('— private mode (AGENTMAP_PRIVATE=1)');
+{
+  const PPORT = PORT + 1;
+  const pDir = await mkdtemp(path.join(tmpdir(), 'agentmap-priv-'));
+  const pServer = spawn(process.execPath, [new URL('../scripts/dev-server.mjs', import.meta.url).pathname], {
+    env: {
+      ...process.env,
+      PORT: String(PPORT),
+      AGENTMAP_TOKEN: TOKEN,
+      AGENTMAP_OWNER_EMAIL: OWNER,
+      AGENTMAP_PRIVATE: '1',
+      AGENTMAP_DATA_DIR: pDir,
+      DATABASE_URL: '',
+      POSTGRES_URL: '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    for (let i = 0; i < 50; i++) {
+      try { if ((await fetch(`http://localhost:${PPORT}/api/health`)).ok) break; } catch { /* boot */ }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const health = await (await fetch(`http://localhost:${PPORT}/api/health`)).json();
+    ok(health.private === true, 'health reports private mode');
+    ok((await fetch(`http://localhost:${PPORT}/api/projects`)).status === 401, 'anonymous read → 401');
+    ok((await fetch(`http://localhost:${PPORT}/api/projects`, { headers: AUTH })).status === 200, 'bearer token still reads');
+    const reg = await fetch(`http://localhost:${PPORT}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: OWNER, password: 'private pass 9' }),
+    });
+    const pCookie = (reg.headers.get('set-cookie') || '').split(';')[0];
+    ok((await fetch(`http://localhost:${PPORT}/api/projects`, { headers: { Cookie: pCookie } })).status === 200, 'owner session reads');
+  } finally {
+    pServer.kill();
+    await rm(pDir, { recursive: true, force: true });
+  }
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL API TESTS PASSED');
 process.exit(failures ? 1 : 0);

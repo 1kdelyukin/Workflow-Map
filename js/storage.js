@@ -48,11 +48,11 @@ async function api(path, { method = 'GET', body, headers = {} } = {}) {
 export async function probeRemote() {
   try {
     const res = await fetch('api/health', { cache: 'no-store' });
-    if (!res.ok) return false;
+    if (!res.ok) return null;
     const j = await res.json();
-    return j?.ok === true && j.remote === true;
+    return j?.ok === true && j.remote === true ? { private: j.private === true } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 

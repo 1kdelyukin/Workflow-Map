@@ -71,7 +71,7 @@ Bare project JSON (just `{nodes, edges, …}` without the wrapper) is also accep
 ## Deployment modes
 
 - **Static** (any file host): projects live in the browser's IndexedDB. Exchange happens through the file formats above.
-- **Server** (Vercel + Postgres, or the bundled Node server): projects live in a shared database. The browser app syncs live, and AI assistants connect through MCP or REST. Env vars: `DATABASE_URL` (or `AGENTMAP_DATA_DIR` for file storage), `AGENTMAP_TOKEN` (the API bearer token for MCP), and optionally `AGENTMAP_OWNER_EMAIL` (the only email allowed to register the single owner account).
+- **Server** (Vercel + Postgres, or the bundled Node server): projects live in a shared database. The browser app syncs live, and AI assistants connect through MCP or REST. Env vars: `DATABASE_URL` (or `AGENTMAP_DATA_DIR` for file storage), `AGENTMAP_TOKEN` (the API bearer token for MCP), optionally `AGENTMAP_OWNER_EMAIL` (the only email allowed to register the single owner account), and optionally `AGENTMAP_PRIVATE=1` (reads also require auth — no anonymous viewing).
 
 ## Access model
 

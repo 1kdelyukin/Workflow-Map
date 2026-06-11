@@ -5,7 +5,7 @@ import {
   addNode, addEdge, deleteEdge, setParent, setSelection, clearSelection,
   setView, getView, snapEnabled, markDirty, pushUndo, runUndo,
 } from './state.js';
-import { esc, clamp, toast } from './ui.js';
+import { esc, clamp, toast, uiPref } from './ui.js';
 import { icon } from './icons.js';
 import { computeLayout } from './layout.js';
 
@@ -184,6 +184,41 @@ export function initCanvas(host) {
     geom.set(id, { x: n.x, y: n.y, w: el.offsetWidth, h: el.offsetHeight, type: n.type });
   }
 
+  /* ── auto-arrange view: a non-destructive presentation toggle. Computed
+     positions are applied to the DOM and geometry only — saved x/y stay
+     untouched, so it's available to viewers too and never autosaves. ── */
+  let arrangeView = uiPref('arrangeView') === '1';
+  let arrangedPos = new Map();
+
+  function applyArrangedPositions() {
+    arrangedPos = new Map();
+    if (!arrangeView) return;
+    const nodes = childrenOf(state.parentId);
+    if (nodes.length < 2) return;
+    const sizes = new Map(nodes.map((n) => {
+      const g = geom.get(n.id);
+      return [n.id, { w: g?.w || 216, h: g?.h || 88 }];
+    }));
+    arrangedPos = computeLayout(nodes, layerEdges(state.parentId), sizes);
+    for (const n of nodes) {
+      const p = arrangedPos.get(n.id);
+      const el = nodeEls.get(n.id);
+      const g = geom.get(n.id);
+      if (!p || !el || !g) continue;
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+      g.x = p.x;
+      g.y = p.y;
+    }
+  }
+
+  function setArrangeView(on) {
+    arrangeView = on;
+    uiPref('arrangeView', on ? '1' : '0');
+    rebuild();
+    fit();
+  }
+
   function rebuild() {
     if (!state.project) return;
     const nodes = childrenOf(state.parentId);
@@ -191,6 +226,7 @@ export function initCanvas(host) {
     nodeEls = new Map([...nodeLayer.querySelectorAll('.node')].map((el) => [el.dataset.id, el]));
     geom = new Map();
     for (const n of nodes) measure(n.id);
+    applyArrangedPositions();
 
     edgeList = layerEdges(state.parentId);
     edgeG.innerHTML = edgeList.map((e) => `
@@ -254,6 +290,13 @@ export function initCanvas(host) {
     const ne = nodeLayer.querySelector(`.node[data-id="${cssEsc(id)}"]`);
     nodeEls.set(id, ne);
     measure(id);
+    const arranged = arrangeView && arrangedPos.get(id);
+    if (arranged) {
+      ne.style.left = arranged.x + 'px';
+      ne.style.top = arranged.y + 'px';
+      const g = geom.get(id);
+      if (g) { g.x = arranged.x; g.y = arranged.y; }
+    }
     updateEdgesTouching(new Set([id]));
     applySelection();
     applyFilters();
@@ -359,6 +402,13 @@ export function initCanvas(host) {
     e.preventDefault();
   }
 
+  // Double-press detection lives here rather than on the dblclick event:
+  // dragging captures the pointer to the viewport, which retargets the browser's
+  // composed click/dblclick away from the card — so we count presses ourselves.
+  let lastPress = { id: null, t: 0, x: 0, y: 0 };
+  let suppressDblclickUntil = 0;
+  let arrangeHintAt = 0;
+
   function startNodeInteraction(e, nodeEl) {
     const id = nodeEl.dataset.id;
     if (e.shiftKey) {
@@ -366,8 +416,30 @@ export function initCanvas(host) {
       try { viewport.setPointerCapture(e.pointerId); } catch { /* synthetic pointers */ }
       return;
     }
-    if (!state.selection.has(id)) setSelection([id]);
+    const now = performance.now();
+    const isDouble = lastPress.id === id && now - lastPress.t < 400
+      && Math.hypot(e.clientX - lastPress.x, e.clientY - lastPress.y) < 6;
+    lastPress = { id, t: now, x: e.clientX, y: e.clientY };
+    if (isDouble) {
+      // double-click anywhere on the card: containers open, leaves focus the title
+      lastPress = { id: null, t: 0, x: 0, y: 0 };
+      suppressDblclickUntil = now + 600;
+      e.preventDefault();
+      if (childCount(id)) setParent(id);
+      else setSelection([id], { focusTitle: state.canEdit });
+      return;
+    }
+    // quiet: don't pop the detail panel for what may become a drag —
+    // a clean click re-emits the selection on pointerup
+    if (!state.selection.has(id)) setSelection([id], { quiet: state.canEdit && !arrangeView });
     if (!state.canEdit) return; // viewers can select, not move
+    if (arrangeView) {
+      if (now - arrangeHintAt > 2500) {
+        arrangeHintAt = now;
+        toast('Auto-arrange view is on — toggle it off (L) to move cards.', { type: 'info', timeout: 2400 });
+      }
+      return;
+    }
     const ids = [...state.selection];
     gesture = {
       type: 'drag', ids, primary: id, pointerId: e.pointerId,
@@ -570,7 +642,7 @@ export function initCanvas(host) {
       for (const i of g.ids) nodeEls.get(i)?.classList.remove('dragging');
       guideG.innerHTML = '';
       if (g.moved) { markDirty(); emitMoved(); }
-      else if (state.selection.size > 1) setSelection([g.primary]);
+      else setSelection([g.primary]); // clean click: open the panel
       return;
     }
     if (g.type === 'marquee') {
@@ -641,6 +713,7 @@ export function initCanvas(host) {
   viewport.addEventListener('gestureend', (e) => e.preventDefault());
 
   viewport.addEventListener('dblclick', (e) => {
+    if (performance.now() < suppressDblclickUntil) return; // handled as a double-press already
     if (e.target.closest('.port') || e.target.closest('.edge-x')) return;
     const nodeEl = e.target.closest('.node');
     if (nodeEl) {
@@ -763,6 +836,11 @@ export function initCanvas(host) {
       };
       return api.addNodeAt(w, type);
     },
+    toggleArrangeView() {
+      setArrangeView(!arrangeView);
+      return arrangeView;
+    },
+    arrangeViewOn: () => arrangeView,
     runAutoLayout() {
       if (!state.canEdit) return;
       const nodes = childrenOf(state.parentId);

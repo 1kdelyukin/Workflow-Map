@@ -13,7 +13,7 @@ export function initLanding(viewEl) {
       <header class="land-head">
         <div class="lib-brand">${icon('logo', 'brand-ic')}<span class="brand-name">AgentMap</span></div>
         <div class="flex-1"></div>
-        <button class="btn" data-act="guest-top">${icon('eye')}<span>Browse as guest</span></button>
+        ${state.privateMode ? '' : `<button class="btn" data-act="guest-top">${icon('eye')}<span>Browse as guest</span></button>`}
       </header>
       <main class="land-main">
         <section class="land-copy">
@@ -51,10 +51,10 @@ export function initLanding(viewEl) {
             <div class="land-error" role="alert" hidden></div>
             <button class="btn btn-primary land-submit" type="submit">${registered ? 'Sign in' : 'Create password & sign in'}</button>
           </form>
-          <button class="land-guest" data-act="guest">Just looking? <b>Browse as guest →</b></button>
+          ${state.privateMode ? '' : `<button class="land-guest" data-act="guest">Just looking? <b>Browse as guest →</b></button>`}
         </section>
       </main>
-      <footer class="land-foot">Single-owner deployment · guests are view-only · AI assistants connect via <code>/api/mcp</code></footer>
+      <footer class="land-foot">Single-owner deployment · ${state.privateMode ? 'private — sign-in required' : 'guests are view-only'} · AI assistants connect via <code>/api/mcp</code></footer>
     </div>`;
 
   const form = viewEl.querySelector('.land-form');
@@ -63,8 +63,8 @@ export function initLanding(viewEl) {
   const submitLabel = submit.textContent;
 
   const browseAsGuest = () => { location.hash = '#library'; };
-  viewEl.querySelector('[data-act=guest]').addEventListener('click', browseAsGuest);
-  viewEl.querySelector('[data-act=guest-top]').addEventListener('click', browseAsGuest);
+  viewEl.querySelector('[data-act=guest]')?.addEventListener('click', browseAsGuest);
+  viewEl.querySelector('[data-act=guest-top]')?.addEventListener('click', browseAsGuest);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

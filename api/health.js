@@ -1,7 +1,7 @@
 // Unauthenticated probe the web app uses to decide between server storage and
 // browser storage. Reports configuration only — never any data.
 import { storeInfo } from './_lib/store.js';
-import { tokenConfigured } from './_lib/auth.js';
+import { tokenConfigured, privateMode } from './_lib/auth.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -13,6 +13,7 @@ export default async function handler(req, res) {
     remote: store.configured,
     storage: store.configured ? store.kind : null,
     mcp: store.configured && tokenConfigured(),
+    private: privateMode(),
   };
   if (!store.configured) {
     body.reason = 'No database configured — set DATABASE_URL (Postgres) or AGENTMAP_DATA_DIR (file storage).';

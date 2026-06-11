@@ -31,6 +31,7 @@ export const state = {
   saveStatus: 'saved',    // 'saved' | 'saving' | 'error'
   firstRun: false,
   remoteAvailable: false,
+  privateMode: false,     // server requires sign-in even to view
   canEdit: true,          // false = signed-out viewer on a server deployment
   auth: { registered: false, email: null },
 };
